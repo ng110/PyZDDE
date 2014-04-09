@@ -40,7 +40,7 @@ if USE_PYWIN32DDE:
         USING_BACKUP_DDE = False
 else:
     import dde_backup as dde
-    #reload(dde)    # Temporary for development purpose ... To remove/Comment out before checkin to master
+    reload(dde)    # Temporary for development purpose ... To remove/Comment out before checkin to master
     USING_BACKUP_DDE = True
 
 #Try to import IPython if it is available (for notebook helper functions)
@@ -271,6 +271,11 @@ class PyZDDE(object):
 
     # ZEMAX control/query methods
     #----------------------------
+    def zArrayTrace(self, data=None):
+        print("This function has not been implemented. Please don't use it")
+        self.conversation.RequestArrayTrace(0,0)
+        return 0
+
     def zCloseUDOData(self, bufferCode):
         """Close the User Defined Operand (UDO) buffer, which allows the ZEMAX
         optimizer to proceed.

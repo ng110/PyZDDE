@@ -13,10 +13,11 @@
 #-------------------------------------------------------------------------------
 from __future__ import print_function
 import sys
-from ctypes import c_char_p, c_void_p, c_int, c_ulong, c_char_p
-from ctypes import windll, byref, create_string_buffer
+from ctypes import c_int, c_double, c_char_p, c_void_p, c_int, c_ulong, c_char, pointer, cast
+from ctypes import windll, byref, create_string_buffer, Structure, sizeof
 from ctypes import POINTER, WINFUNCTYPE
 from ctypes.wintypes import BOOL, HWND, MSG, DWORD, BYTE, INT, LPCWSTR, UINT, ULONG
+import time
 
 # DECLARE_HANDLE(name) typedef void *name;
 HCONV     = c_void_p  # = DECLARE_HANDLE(HCONV)
@@ -31,13 +32,14 @@ ULONG_PTR = c_ulong
 PCONVCONTEXT = c_void_p
 
 # DDEML errors
-# Ref: http://msdn.microsoft.com/en-us/library/windows/desktop/ms648755(v=vs.85).aspx
 DMLERR_NO_ERROR            = 0x0000  # No error
 DMLERR_ADVACKTIMEOUT       = 0x4000  # request for synchronous advise transaction timed out
 DMLERR_DATAACKTIMEOUT      = 0x4002  # request for synchronous data transaction timed out
 DMLERR_DLL_NOT_INITIALIZED = 0x4003  # DDEML functions called without iniatializing
 DMLERR_EXECACKTIMEOUT      = 0x4006  # request for synchronous execute transaction timed out
 DMLERR_NO_CONV_ESTABLISHED = 0x400a  # client's attempt to establish a conversation has failed (can happen during DdeConnect)
+DMLERR_POKEACKTIMEOUT      = 0x400b  # A request for a synchronous poke transaction has timed out.
+DMLERR_POSTMSG_FAILED      = 0x400c  # An internal call to the PostMessage function has failed.
 DMLERR_SERVER_DIED         = 0x400e
 
 # Predefined Clipboard Formats
@@ -122,6 +124,16 @@ DDECALLBACK = WINFUNCTYPE(HDDEDATA, UINT, UINT, HCONV, HSZ, HSZ, HDDEDATA,  ULON
 # PyZDDE specific globals
 number_of_apps_communicating = 0  # to keep an account of the number of zemax
                                   # server objects --'ZEMAX', 'ZEMAX1' etc
+
+# Ray data structure
+class DdeRayData(Structure):
+    _fields_ = [("x", c_double), ("y", c_double), ("z", c_double),
+                ("l", c_double), ("m", c_double), ("n", c_double),
+                ("opd", c_double), ("intensity", c_double),
+                ("Exr", c_double), ("Exi", c_double), ("Eyr", c_double),
+                ("Eyi", c_double), ("Ezr", c_double), ("Ezi", c_double),
+                ("wave", c_int), ("error", c_int), ("vigcode", c_int),
+                ("want_opd", c_int)]
 
 class CreateServer(object):
     """This is really just an interface class so that PyZDDE can use either the
@@ -223,13 +235,48 @@ class CreateConversation(object):
         ----------
         ddeRayData : the ray data for array trace
         """
-        pass
         # TO DO!!!
         # 1. Assign proper timeout as in Request() function
         # 2. Create the rayData structure conforming to ctypes structure
         # 3. Process the reply and return ray trace data
         # 4. Handle errors
-        #reply = self.ddec.poke("RayArrayData", rayData, timeout)
+        #num_rays = 1681 # -20 to 20 == 41 rays; 41*41 = 1681
+        num_rays = 441 # -10 to 10 == 21 rays; 21*21 = 441
+        # Array of rays
+        ray_data_array = (DdeRayData*(num_rays+1))()
+
+        # Fill up ray array (same ray data as in ArrayDemo.c)
+        ray_data_array[0].x = c_double(0.0)
+        ray_data_array[0].y = c_double(0.0)
+        ray_data_array[0].z = c_double(0.0)
+        ray_data_array[0].l = c_double(0.0)
+        ray_data_array[0].m = c_double(0.0)
+        ray_data_array[0].n = c_double(0.0)
+        ray_data_array[0].opd = c_double(0.0) # mode 0
+        ray_data_array[0].intensity = c_double(0.0)
+        ray_data_array[0].wave = 0
+        ray_data_array[0].error = num_rays   # trace k rays
+        ray_data_array[0].vigcode = 0
+        ray_data_array[0].want_opd = -1
+        k=0
+        for i in range(-10,11):
+            for j in range(-10,11):
+                k+=1
+                ray_data_array[k].x = c_double(0.0)
+                ray_data_array[k].y = c_double(0.0)
+                ray_data_array[k].z = c_double(i/20.0)
+                ray_data_array[k].l = c_double(j/20.0)
+                ray_data_array[k].m = c_double(0.0)
+                ray_data_array[k].n = c_double(0.0)
+                ray_data_array[k].opd = c_double(0.0)
+                ray_data_array[k].intensity = c_double(1.0)
+                ray_data_array[k].wave = 1
+                ray_data_array[k].error = 0
+                ray_data_array[k].vigcode = 0
+                ray_data_array[k].want_opd = 0
+        reply = self.ddec.poke("RayArrayData", ray_data_array, timeout)
+        print(reply)
+        return 0
 
     def SetDDETimeout(self, timeout):
         """Set DDE timeout
@@ -351,19 +398,19 @@ class DDEClient(object):
 
     def poke(self, item, data, timeout=5000):
         """Poke (unsolicited) data to DDE server"""
+        print("Debug: In DDE poke.")
         hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINUNICODE)
-        pData = c_char_p(data)
-        cbData = DWORD(len(data) + 1)
+        cbData = DWORD(sizeof(data))
         pdwResult = DWORD(0)
-        #hData = DDE.CreateDataHandle(self._idInst, data, cbData, 0, hszItem, CP_WINUNICODE, 0)
-        #hDdeData = DDE.ClientTransaction(hData, -1, self._hConv, hszItem, CF_TEXT, XTYP_POKE, timeout, LPDWORD())
-        hDdeData = DDE.ClientTransaction(pData, cbData, self._hConv, hszItem, CF_TEXT, XTYP_POKE, timeout, byref(pdwResult))
+        #hData = DDE.CreateDataHandle(self._idInst, cast(data, POINTER(c_char)), cbData, 0, hszItem, CP_WINANSI, 0)
+        #hDdeData = DDE.ClientTransaction(hData, -1, self._hConv, hszItem, CF_TEXT, XTYP_POKE, timeout, byref(pdwResult))
+        hDdeData = DDE.ClientTransaction(cast(data, POINTER(c_char)), cbData, self._hConv, hszItem, CF_TEXT, XTYP_POKE, timeout, byref(pdwResult))
         DDE.FreeStringHandle(self._idInst, hszItem)
+        print("Debug: hDdeData", hDdeData)
         #DDE.FreeDataHandle(dData)
         if not hDdeData:
             print("Value of pdwResult: ", pdwResult)
             raise DDEError("Unable to poke to server", self._idInst)
-
         if timeout != TIMEOUT_ASYNC:
             pdwSize = DWORD(0)
             pData = DDE.AccessData(hDdeData, byref(pdwSize))
@@ -379,7 +426,7 @@ class DDEClient(object):
 
     def callback(self, value, item=None):
         """Callback function for advice."""
-        print("%s: %s" % (item, value))
+        print("callback: %s: %s" % (item, value))
 
     def _callback(self, wType, uFmt, hConv, hsz1, hsz2, hDdeData, dwData1, dwData2):
         """DdeCallback callback function for processing Dynamic Data Exchange (DDE)
@@ -410,7 +457,7 @@ class DDEClient(object):
                 DDE.UnaccessData(hDdeData)
                 return DDE_FACK
             else:
-                raise DDEError("Unable to access advice data", self._idInst)
+                print("No advice data!")
 
         return 0
 
