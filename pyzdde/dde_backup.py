@@ -457,7 +457,10 @@ class DDEClient(object):
                 DDE.UnaccessData(hDdeData)
                 return DDE_FACK
             else:
-                print("No advice data!")
+                print("Advice data NULL!")
+        if wType == XTYP_DISCONNECT:
+            print("Disconnect notification received from server")
+
 
         return 0
 

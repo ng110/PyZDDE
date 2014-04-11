@@ -22,6 +22,7 @@ status = link0.zDDEInit()
 
 if ~status:
     ret = link0.zGetRefresh()
+    ret = link0.zGetUpdate()
     try:
         link0.zArrayTrace()
     except:
