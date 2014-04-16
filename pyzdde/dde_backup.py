@@ -13,10 +13,10 @@
 #-------------------------------------------------------------------------------
 from __future__ import print_function
 import sys
-from ctypes import c_int, c_double, c_char_p, c_void_p, c_int, c_ulong, c_char, pointer, cast
+from ctypes import c_int, c_double, c_char_p, c_void_p, c_ulong, c_char, pointer, cast
 from ctypes import windll, byref, create_string_buffer, Structure, sizeof
 from ctypes import POINTER, WINFUNCTYPE
-from ctypes.wintypes import BOOL, HWND, MSG, DWORD, BYTE, INT, LPCWSTR, UINT, ULONG
+from ctypes.wintypes import BOOL, HWND, MSG, DWORD, BYTE, INT, LPCWSTR, UINT, ULONG, LPCSTR
 import time
 
 # DECLARE_HANDLE(name) typedef void *name;
@@ -305,10 +305,12 @@ class DDE(object):
     ClientTransaction  = get_winfunc("user32", "DdeClientTransaction",   HDDEDATA, (LPBYTE, DWORD, HCONV, HSZ, UINT, UINT, DWORD, LPDWORD))
     Connect            = get_winfunc("user32", "DdeConnect",             HCONV,    (DWORD, HSZ, HSZ, PCONVCONTEXT))
     CreateDataHandle   = get_winfunc("user32", "DdeCreateDataHandle",    HDDEDATA, (DWORD, LPBYTE, DWORD, DWORD, HSZ, UINT, UINT))
-    CreateStringHandle = get_winfunc("user32", "DdeCreateStringHandleW", HSZ,      (DWORD, LPCWSTR, UINT))  # Unicode version
+    #CreateStringHandle = get_winfunc("user32", "DdeCreateStringHandleW", HSZ,      (DWORD, LPCWSTR, UINT))  # Unicode version
+    CreateStringHandle = get_winfunc("user32", "DdeCreateStringHandleA", HSZ,      (DWORD, LPCSTR, UINT))  # ANSI version
     Disconnect         = get_winfunc("user32", "DdeDisconnect",          BOOL,     (HCONV,))
     GetLastError       = get_winfunc("user32", "DdeGetLastError",        UINT,     (DWORD,))
-    Initialize         = get_winfunc("user32", "DdeInitializeW",         UINT,     (LPDWORD, DDECALLBACK, DWORD, DWORD)) # Unicode version of DDE initialize
+    #Initialize         = get_winfunc("user32", "DdeInitializeW",         UINT,     (LPDWORD, DDECALLBACK, DWORD, DWORD)) # Unicode version of DDE initialize
+    Initialize         = get_winfunc("user32", "DdeInitializeA",         UINT,     (LPDWORD, DDECALLBACK, DWORD, DWORD)) # ANSI version of DDE initialize
     FreeDataHandle     = get_winfunc("user32", "DdeFreeDataHandle",      BOOL,     (HDDEDATA,))
     FreeStringHandle   = get_winfunc("user32", "DdeFreeStringHandle",    BOOL,     (DWORD, HSZ))
     QueryString        = get_winfunc("user32", "DdeQueryStringA",        DWORD,    (DWORD, HSZ, LPSTR, DWORD, c_int)) # ANSI version of QueryString
@@ -340,8 +342,10 @@ class DDEClient(object):
         if res != DMLERR_NO_ERROR:
             raise DDEError("Unable to register with DDEML (err=%s)" % hex(res))
 
-        hszServName = DDE.CreateStringHandle(self._idInst, service, CP_WINUNICODE)
-        hszTopic = DDE.CreateStringHandle(self._idInst, topic, CP_WINUNICODE)
+        #hszServName = DDE.CreateStringHandle(self._idInst, service, CP_WINUNICODE)
+        #hszTopic = DDE.CreateStringHandle(self._idInst, topic, CP_WINUNICODE)
+        hszServName = DDE.CreateStringHandle(self._idInst, service, CP_WINANSI)
+        hszTopic = DDE.CreateStringHandle(self._idInst, topic, CP_WINANSI)
         # Try to establish conversation with the Zemax server
         self._hConv = DDE.Connect(self._idInst, hszServName, hszTopic, PCONVCONTEXT())
         DDE.FreeStringHandle(self._idInst, hszTopic)
@@ -358,7 +362,8 @@ class DDEClient(object):
 
     def advise(self, item, stop=False):
         """Request updates when DDE data changes."""
-        hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINUNICODE)
+        #hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINUNICODE)
+        hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINANSI)
         hDdeData = DDE.ClientTransaction(LPBYTE(), 0, self._hConv, hszItem, CF_TEXT, XTYP_ADVSTOP if stop else XTYP_ADVSTART, TIMEOUT_ASYNC, LPDWORD())
         DDE.FreeStringHandle(self._idInst, hszItem)
         if not hDdeData:
@@ -376,7 +381,8 @@ class DDEClient(object):
 
     def request(self, item, timeout=5000):
         """Request data from DDE service."""
-        hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINUNICODE)
+        #hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINUNICODE)
+        hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINANSI)
         #hDdeData = DDE.ClientTransaction(LPBYTE(), 0, self._hConv, hszItem, CF_TEXT, XTYP_REQUEST, timeout, LPDWORD())
         pdwResult = DWORD(0)
         hDdeData = DDE.ClientTransaction(LPBYTE(), 0, self._hConv, hszItem, CF_TEXT, XTYP_REQUEST, timeout, byref(pdwResult))
@@ -399,7 +405,8 @@ class DDEClient(object):
     def poke(self, item, data, timeout=5000):
         """Poke (unsolicited) data to DDE server"""
         print("Debug: In DDE poke.")
-        hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINUNICODE)
+        #hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINUNICODE)
+        hszItem = DDE.CreateStringHandle(self._idInst, item, CP_WINANSI)
         cbData = DWORD(sizeof(data))
         pdwResult = DWORD(0)
         #hData = DDE.CreateDataHandle(self._idInst, cast(data, POINTER(c_char)), cbData, 0, hszItem, CP_WINANSI, 0)
@@ -457,7 +464,7 @@ class DDEClient(object):
                 DDE.UnaccessData(hDdeData)
                 return DDE_FACK
             else:
-                print("Advice data NULL!")
+                print("Error: AccessData returned NULL! (err = %s)"% (hex(DDE.GetLastError(self._idInst))))
         if wType == XTYP_DISCONNECT:
             print("Disconnect notification received from server")
 

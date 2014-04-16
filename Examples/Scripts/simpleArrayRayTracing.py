@@ -21,6 +21,8 @@ status = link0.zDDEInit()
 
 
 if ~status:
+    ret = link0.zGetVersion()
+    print("Version: ", ret)
     ret = link0.zGetRefresh()
     ret = link0.zGetUpdate()
     try:

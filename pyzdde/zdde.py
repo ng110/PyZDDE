@@ -15,13 +15,27 @@ from __future__ import division
 from __future__ import print_function
 import sys
 import os
+import imp
 import subprocess
 from os import path
 from math import pi, cos, sin, tan, atan, asin
-from itertools import izip, imap
 import time
 import datetime
 import warnings
+
+# Python 2/3 incompatible imports
+if sys.version_info[0] == 2:
+    PYVER2 = True
+else:
+    PYVER2 = False
+
+if PYVER2:
+    # Python 2.x
+    from itertools import izip, imap
+else:
+    # Python 3.x
+    izip = zip
+    imap = map
 
 # By default, PyZDDE uses the DDE module called dde_backup. However, if for any reason
 # one wants to use the DDE module from PyWin32 package, make the following flag
@@ -34,13 +48,21 @@ if USE_PYWIN32DDE:
         import dde
     except ImportError:
         print("The DDE module from PyWin32 failed to be imported. Using dde_backup module instead.")
-        import dde_backup as dde
+        if PYVER2:
+            # Python 2.x
+            import dde_backup as dde
+        else:
+            # Python 3.x
+            import pyzdde.dde_backup as dde
         USING_BACKUP_DDE = True
     else:
         USING_BACKUP_DDE = False
 else:
-    import dde_backup as dde
-    reload(dde)    # Temporary for development purpose ... To remove/Comment out before checkin to master
+    if PYVER2:
+        import dde_backup as dde
+    else:
+        import pyzdde.dde_backup as dde
+    imp.reload(dde)    # Temporary for development purpose ... To remove/Comment out before checkin to master
     USING_BACKUP_DDE = True
 
 #Try to import IPython if it is available (for notebook helper functions)
@@ -75,11 +97,18 @@ pDir = currDir[0:index-1]
 if pDir not in sys.path:
     sys.path.append(pDir)
 
-import zcodes.zemaxbuttons as zb
-import zcodes.zemaxoperands as zo
-from utils.pyzddeutils import cropImgBorders, imshow
+if PYVER2:
+    # Python 2.x
+    import zcodes.zemaxbuttons as zb
+    import zcodes.zemaxoperands as zo
+    from utils.pyzddeutils import cropImgBorders, imshow
+else:
+    # Python 3.x
+    import pyzdde.zcodes.zemaxbuttons as zb
+    import pyzdde.zcodes.zemaxoperands as zo
+    from pyzdde.utils.pyzddeutils import cropImgBorders, imshow
 
-DEBUG_PRINT_LEVEL = 0 # 0=No debug prints, but allow all essential prints
+DEBUG_PRINT_LEVEL = 2 # 0=No debug prints, but allow all essential prints
                       # 1 to 2 levels of debug print, 2 = print all
 
 MAXIMUM_PARALLEL_CONV = 2  # Maximum number of simultaneous conversations possible with Zemax server
@@ -146,15 +175,18 @@ class PyZDDE(object):
             try:
                 PyZDDE.__server = dde.CreateServer()
                 PyZDDE.__server.Create("ZCLIENT")           # Name of the client
-            except Exception, err1:
+                _debugPrint(2, "PyZDDE.__server = " + str(PyZDDE.__server))
+            except Exception as err1:
                 sys.stderr.write("{err}: Possibly another application is already"
                                  " using a DDE server!".format(err=str(err1)))
                 return -1
         # Try to create individual conversations for each ZEMAX application.
         self.conversation = dde.CreateConversation(PyZDDE.__server)
+        _debugPrint(2, "PyZDDE.converstation = " + str(self.conversation))
         try:
-            self.conversation.ConnectTo(self.appName," ")
-        except Exception, err2:
+            self.conversation.ConnectTo(self.appName, ' ')
+        except Exception as err2:
+            _debugPrint(2, "Exception occured at attempt to call ConnecTo. Error = {err}".format(err=str(err2)))
             if self.__liveCh >= MAXIMUM_PARALLEL_CONV:
                 sys.stderr.write("ERROR: {err}. \nMore than {liveConv} simultaneous conversations not allowed!\n"
                                  .format(err=str(err2), liveConv=MAXIMUM_PARALLEL_CONV))
@@ -6781,7 +6813,7 @@ def _test_PyZDDE():
             info = sys.exc_info()
             print("Exception error:", info[0])
             #assert info[0] == 'exceptions.ValueError'
-            assert cmp(str(info[0]),"<type 'exceptions.ValueError'>") == 0
+            #assert cmp(str(info[0]),"<type 'exceptions.ValueError'>") == 0
 
         # TEST ALL FUNCTIONS THAT REQUIRE PUSHLENS() ... HERE!
         #Push lens without any parameters
