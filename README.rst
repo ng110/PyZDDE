@@ -1,18 +1,65 @@
-PyZDDE: Python Zemax Dynamic Data Exchange
-------------------------------------------
+..  image:: https://raw.githubusercontent.com/indranilsinharoy/PyZDDE/master/Doc/Images/logo_text_small.png
+
+
+Python Zemax Dynamic Data Exchange
+-----------------------------------
 
 |DOI|
 
 Current revision
 '''''''''''''''''
 
-2.0.0a1 (Last significant update on 07/25/2015)
+2.0.2 (Last significant update on 01/03/2016)
+
+
+**NEW**: We are also working on a Python library, called PyZOS, to provide better interactivity
+with the new Zemax OpticStudio API (COM based interface). The project is hosted at `Github <https://github.com/pyzos/pyzos>`__. 
+
 
 Change log
 ~~~~~~~~~~
 Brief change-log is available in the `News and
-Updates <https://github.com/indranilsinharoy/PyZDDE/wiki/News-and-updates>`__
+Updates <https://github.com/indranilsinharoy/PyZDDE/wiki/08.-News-and-updates>`__
 page.
+
+
+Examples
+''''''''
+
+Examples included with PyZDDE are in the folder "Examples". Please move the examples to your desired location after extracting the PyZDDE package. 
+
+
+Hello world
+~~~~~~~~~~~
+
+Here is a simple but complete "Hello world" code which prints the version of Zemax. (If you are using Python 2.x, don't forget to add
+``from __future__ import print_function`` before these lines.)
+
+.. code:: python
+
+    import pyzdde.zdde as pyz
+    ln = pyz.createLink() # DDE link object
+    print("Hello Zemax version: ", ln.zGetVersion())
+    ln.close()
+
+More examples (view online)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A gallery of notebooks demonstrating the use of PyZDDE within Jupyter (previously IPython) notebooks 
+are `here <https://github.com/indranilsinharoy/PyZDDE/wiki/03.-Using-PyZDDE-in-Jupyter:-A-Gallery-of-notebooks>`__.
+
+Examples of using Zemax interactively from a Python shell is `here <https://github.com/indranilsinharoy/PyZDDE/wiki/02.-Using-PyZDDE-interactively-in-a-Python-shell>`_.
+
+Example Python scripts are
+`here <https://github.com/indranilsinharoy/PyZDDE/tree/master/Examples/Scripts/>`__.
+
+Examples specific to array ray tracing are catalogued
+`here <https://github.com/indranilsinharoy/PyZDDE/wiki/05.-Examples-of-array-ray-tracing>`__.
+
+In addition, the repository
+`Intro2LensDesignByGeary <https://github.com/indranilsinharoy/Intro2LensDesignByGeary>`__
+contains notes from few chapters of the book "Introduction to Lens
+Design," by Joseph M. Geary, in the form of IPython notebooks.
 
 
 Install PyZDDE from PyPI
@@ -67,8 +114,8 @@ Note 3. To uninstall pyzdde using pip use
   pip uninstall pyzdde
 
 
-GET THE LATEST CODE:
-~~~~~~~~~~~~~~~~~~~
+Get the latest code
+'''''''''''''''''''
 
 To get the latest PyZDDE code please download / fork / clone from 
 `GitHub repository <https://github.com/indranilsinharoy/PyZDDE>`__.
@@ -93,40 +140,6 @@ Initial setup
 PyZDDE comes with few ZPL macro files that are present in the directory "ZPLMacros". They are occasionally used by PyZDDE (for example in the function ``ipzCaptureWindowLQ()``). Please copy/move the files from the folder "ZPLMacros" to the folder where Zemax/ Optic studio expects to find ZPL macros (By default, this folder is ``C:\<username>\Documents\ZEMAX\Macros``). A copy of the "ZPLMacros" folder is always available in (installed with) the PyZDDE package.
 
 
-Examples
-~~~~~~~~
-
-Examples shipped with PyZDDE are in the folder "Examples". Please move the examples to your desired location after extracting the PyZDDE package. 
-
-
-Hello world
-^^^^^^^^^^^
-
-Here is a simple but complete "Hello world" code which prints the version of Zemax. (If you are using Python 2.x, don't forget to add
-``from __future__ import print_function`` before these lines.)
-
-.. code:: python
-
-    import pyzdde.zdde as pyz
-    ln = pyz.createLink() # DDE link object
-    print("Hello Zemax version: ", ln.zGetVersion())
-    ln.close()
-
-More examples
-^^^^^^^^^^^^^^
-
-You can find few examples
-`here <http://nbviewer.ipython.org/github/indranilsinharoy/PyZDDE/tree/master/Examples/>`__.
-
-Some examples specific to array ray tracing are catalogued
-`here <https://github.com/indranilsinharoy/PyZDDE/wiki/Array-ray-tracing-examples>`__.
-
-In addition, the repository
-`Intro2LensDesignByGeary <https://github.com/indranilsinharoy/Intro2LensDesignByGeary>`__
-contains notes from few chapters of the book "Introduction to Lens
-Design," by Joseph M. Geary, in the form of IPython notebooks.
-
-
 Modules in PyZDDE
 '''''''''''''''''
 
@@ -134,6 +147,7 @@ Modules in PyZDDE
 -  **arraytrace** (``import pyzdde.arraytrace as at``): provides functions for tracing large number of rays
 -  **zfileutils** (``import pyzdde.zfileutils as zfu``): provides helper functions for various Zemax file handling operations such as reading and writing beam files, .ZRD files, creating .DAT and .GRD files for grid phase /grid sag surfaces, etc.
 -  **systems** (``import pyzdde.systems as osys``): provides helper functions for quickly creating basic optical systems.
+-  **misc** (``import pyzdde.misc as mys``): contains miscellaneous collection of utility functions that may be used with PyZDDE.
 
 Features
 ~~~~~~~~
@@ -141,11 +155,11 @@ Features
 -  Functions for using all "data items" defined in Zemax manual
 -  Supports both Python 2.7 and Python 3.3/3.4
 -  Supports both Unicode and extended ascii text
--  Over 60 additional functions for more efficient use (more will be added in future). Examples include ``zSetTimeout()``,
+-  Over 80 additional functions for more efficient use (more will be added in future). Examples include ``zSetTimeout()``,
    ``zExecuteZPLMacro()``, ``zGetSeidelAberration()``, ``zSetFieldTuple()``,
    ``zGetFieldTuple()``, ``zSetWaveTuple()``, ``zGetWaveTuple()``, ``zCalculateHiatus()``, ``zGetPupilMagnification()``, ``zGetPOP()``,
    ``zSetPOPSettings()``, ``zModifyPOPSettings()``, ``zGetPSF()``, ``zGetPSFCrossSec()``, ``zGetMTF()``, ``zGetImageSimulation()``.
-   A list of the additional functions are available `here <https://github.com/indranilsinharoy/PyZDDE/wiki/List-of-helper-functions-in-PyZDDE>`__.
+   A list of the additional functions are available `here <https://github.com/indranilsinharoy/PyZDDE/wiki/07.-List-of-helper-functions-in-PyZDDE>`__.
 -  Special functions for better interactive use with IPython notebooks.
    Examples include ``ipzCaptureWindow()``, ``ipzGetFirst()``, ``ipzGetPupil()``, ``ipzGetSystemAper()``, ``ipzGetTextWindow()``
 -  Quick generation of few simple optical systems (see ``pyzdde.systems`` module)
@@ -154,10 +168,11 @@ Features
 Overview
 ~~~~~~~~
 
-PyZDDE is a Python-based standalone extension for communicating with `ZEMAX/OpticStudio <http://www.radiantzemax.com/>`__ using the DDE
-protocol. It is similar to---and very much inspired by---the Matlab-based `MZDDE toolbox <http://kb-en.radiantzemax.com/KnowledgebaseArticle50204.aspx>`__ developed by Derek Griffith at CSIR.
+PyZDDE is a Python-based extension for communicating with `ZEMAX/OpticStudio <http://www.zemax.com/>`__ using the DDE
+protocol. It is similar to---and very much inspired by---the Matlab-based `MZDDE toolbox <http://www.zemax.com/support/resource-center/knowledgebase/how-to-talk-to-zemax-from-matlab>`__ developed by Derek Griffith at CSIR.
 
-PyZDDE can be used with regular Python scripts as well as in an interactive environment such as an IPython shell, `QtConsole <http://ipython.org/ipython-doc/dev/interactive/qtconsole.html>`__ or `IPython Notebook <http://ipython.org/ipython-doc/dev/interactive/htmlnotebook.html>`__.
+PyZDDE can be used with regular Python scripts as well as in an interactive environment such as an IPython shell, 
+`QtConsole <http://ipython.readthedocs.org/en/stable/interactive/qtconsole.html>`__ or `IPython Notebook <http://ipython.org/ipython-doc/dev/interactive/htmlnotebook.html>`__.
 
 There are 4 types of functions, and a separate module for array ray tracing in the toolbox:
 
@@ -208,6 +223,8 @@ Getting started with PyZDDE is really very simple as shown in the "Hello world" 
 Dependencies
 ''''''''''''
 
+The core PyZDDE library only depends on the standard Python Library. 
+
 1. Python 2.7 / Python 3.3 and above; 32/64 bit version
 2. Matplotlib (optional, used in some of the example programs)
 
@@ -221,9 +238,9 @@ Contributions and credits
 '''''''''''''''''''''''''
 
 You are encouraged to use, provide feedbacks and contribute to the PyZDDE project. The generous people who have contributed to PyZDDE are
-in `Contributors <https://github.com/indranilsinharoy/PyZDDE/wiki/Contributors>`__. Thanks a lot to all of you.
+in `Contributors <https://github.com/indranilsinharoy/PyZDDE/wiki/09.-Contributors>`__. Thanks a lot to all of you.
 
-Other projects that are using PyZDDE are listed `here <https://github.com/indranilsinharoy/PyZDDE/wiki/Projects-using-PyZDDE>`__.
+Other projects that are using PyZDDE are listed `here <https://github.com/indranilsinharoy/PyZDDE/wiki/10.-Projects-using-PyZDDE>`__.
 
 
 Citing
@@ -238,7 +255,7 @@ Chat room
 
 |Gitter chat|
 
-.. |DOI| image:: https://zenodo.org/badge/doi/10.5281/zenodo.18751.svg
-   :target: http://dx.doi.org/10.5281/zenodo.18751
+.. |DOI| image:: https://zenodo.org/badge/doi/10.5281/zenodo.44295.svg
+   :target: http://dx.doi.org/10.5281/zenodo.44295
 .. |Gitter chat| image:: https://badges.gitter.im/indranilsinharoy/PyZDDE.png
    :target: https://gitter.im/indranilsinharoy/PyZDDE

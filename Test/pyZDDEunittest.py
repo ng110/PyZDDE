@@ -164,6 +164,16 @@ class TestPyZDDEFunctions(unittest.TestCase):
     def test_zGetAddress(self):
         print("\nTEST: zGetAddress()")
         pass
+    
+    def test_zGetAngularMagnification(self):
+        print("\nTEST: zGetAngularMagnification()")
+        # Load a lens file into the DDE server
+        filename = get_test_file()
+        self.ln.zLoadFile(filename)
+        aMag =self.ln.zGetAngularMagnification()
+        self.assertAlmostEqual(0.977161033, aMag, places=4)
+        if TestPyZDDEFunctions.pRetVar:
+            print('zGetAngularMagnification test successful')       
 
     @unittest.skip("To implement")
     def test_zGetAperture(self):
@@ -536,10 +546,11 @@ class TestPyZDDEFunctions(unittest.TestCase):
 ##        pass
 
     def test_zGetMulticon(self):
-        print("\nTEST: zGetMulticon()")
-        # Test zGetMulticon return when the MCE is "empty" (it shouldn't error out)
-        multiConData = self.ln.zGetMulticon(2,3)  # configuration 2, row 3 (both are fictitious)
-        self.assertIsInstance(multiConData,tuple)
+        print("***\nTEST: zGetMulticon()***")
+        print("Lens", self.ln.zGetFile())
+        # Test zGetMulticon return when the MCE is "empty" (it should return None)
+        multiConData = self.ln.zGetMulticon(2, 3)  # configuration 2, row 3 (both are fictitious)
+        self.assertEqual(multiConData, None)
         # insert an additional configuration (column)
         self.ln.zInsertConfig(1)
         # insert an additional operand (row)
@@ -871,7 +882,7 @@ class TestPyZDDEFunctions(unittest.TestCase):
             print("zGetTextFile return value", ret)
         # Request zemax to dump prescription file, with a settings
         ret = self.ln.zGetRefresh()
-        settingsFileName = "Cooke 40 degree field_PreSettings_OnlyCardinals.CFG"
+        settingsFileName = "Cooke_40_degree_field_PreSettings_OnlyCardinals.CFG"
         preFileName = 'Prescription_unitTest_01.txt'
         textFileName = testdirectory + '\\' + preFileName
         ret = self.ln.zGetTextFile(textFileName,'Pre',settingsFileName,1)
@@ -1729,22 +1740,104 @@ class TestPyZDDEFunctions(unittest.TestCase):
         print("\nTEST: zSetTimeout()")
         self.ln.zSetTimeout(3)
         
+    def test_zSetSemiDiameter(self):
+        print("\nTEST: zSetSemiDiameter()")
+        # Load a lens file into the DDE server
+        ln = self.ln
+        filename = get_test_file()
+        ln.zLoadFile(filename)
+        ln.zInsertSurface(surfNum=3) # semi-dia will be non-zero for this surface
+        retVal = ln.zSetSemiDiameter(surfNum=3, value=0)
+        self.assertEqual(retVal, 0)
+        #ln.zGetSolve(surfNum=3, code=ln.SOLVE_SPAR_SEMIDIA)
+        retVal = ln.zGetSurfaceData(surfNum=3, code=ln.SDAT_SEMIDIA)
+        self.assertEqual(retVal, 0)
+        retVal = ln.zSetSemiDiameter(surfNum=3, value=10.25)
+        self.assertEqual(retVal, 10.25)
+        if TestPyZDDEFunctions.pRetVar:
+            print('zSetSemiDiameter test successful')       
+        
+    def test_zInsertDummySurface(self):
+        print("\nTEST: zInsertDummySurface()")
+        # Load a lens file into the DDE server
+        ln = self.ln
+        filename = get_test_file()
+        ln.zLoadFile(filename)
+        numSurf = ln.zGetNumSurf()
+        self.assertEqual(ln.zInsertDummySurface(surfNum=1), numSurf+1)
+        self.assertEqual(ln.zInsertDummySurface(surfNum=1, thick=10), numSurf+2)
+        self.assertEqual(ln.zInsertDummySurface(surfNum=1, semidia=5.0), numSurf+3)
+        self.assertEqual(ln.zGetSurfaceData(surfNum=1, code=ln.SDAT_SEMIDIA), 5.0)
+        if TestPyZDDEFunctions.pRetVar:
+            print('zInsertDummySurface test successful')        
+
+    def test_zInsertCoordinateBreak(self):
+        print("\nTEST: zInsertCoordinateBreak()")
+        # Load a lens file into the DDE server
+        ln = self.ln
+        filename = get_test_file()
+        ln.zLoadFile(filename)
+        xdec, ydec, xtilt, ytilt, ztilt, order, thick = 1.5, 2.5, 5, 10, 15, 1, 10
+        comment = 'tilt'
+        params = [xdec, ydec, xtilt, ytilt, ztilt, order]
+        surf = 1
+        retVal = ln.zInsertCoordinateBreak(surf, xdec, ydec, xtilt, ytilt, ztilt, order, thick, comment)
+        self.assertEqual(retVal, 0)
+        for para, value in enumerate(params, 1):
+            self.assertAlmostEqual(value, ln.zGetSurfaceParameter(surf, para))
+        self.assertAlmostEqual(thick, ln.zGetSurfaceData(surf, code=ln.SDAT_THICK))
+        if TestPyZDDEFunctions.pRetVar:
+            print('zInsertDummySurface test successful')  
+
     def test_zTiltDecenterElements(self):
         print("\nTEST: zTiltDecenterElements()")        
         # Load a lens file into the DDE server
         ln = self.ln
         filename = get_test_file()
+        
+        # Test to match Zemax's Tilt/Decenter Tool's default behaviour        
+        ln.zLoadFile(filename)
+        firstSurf, lastSurf = 3, 4
+        cb1, cb2, dummy = ln.zTiltDecenterElements(firstSurf, lastSurf)
+        # check surface numbers
+        self.assertSequenceEqual(seq1=(cb1, cb2, dummy), seq2=(3, 6, 7))       
+        # check order parameters
+        self.assertEqual(ln.zGetSurfaceParameter(surfNum=cb1, param=6), 0)
+        self.assertEqual(ln.zGetSurfaceParameter(surfNum=cb2, param=6), 1)
+        # check Thickness solves
+        posSlvOnThick, pickSlvThick = 7, 5
+        slvType, fromSurf, length, _, _ = ln.zGetSolve(surfNum=cb2-1, code=ln.SOLVE_SPAR_THICK)
+        self.assertSequenceEqual(seq1=(slvType,       fromSurf, length), 
+                                 seq2=(posSlvOnThick, cb1,      0) )
+        slvType, param1, param2, param3, param4 = ln.zGetSolve(surfNum=cb2, code=ln.SOLVE_SPAR_THICK)
+        scale, offset, currCol = -1, 0, 0        
+        self.assertSequenceEqual(seq1=(slvType,      param1, param2, param3, param4),
+                                 seq2=(pickSlvThick, cb2-1,  scale,  offset, currCol))
+
+        # Test alternate order parameters setting
+        ln.zLoadFile(filename)
+        firstSurf, lastSurf = 3, 4
+        cb1, cb2, dummy = ln.zTiltDecenterElements(firstSurf, lastSurf, order=1)
+        self.assertEqual(ln.zGetSurfaceParameter(surfNum=cb1, param=6), 1)
+        self.assertEqual(ln.zGetSurfaceParameter(surfNum=cb2, param=6), 0)
+        
+        # Test dummy surface semi-diameter setting
+        ln.zLoadFile(filename)
+        firstSurf, lastSurf = 3, 4
+        cb1, cb2, dummy = ln.zTiltDecenterElements(firstSurf, lastSurf, dummySemiDiaToZero=True)
+        self.assertEqual(ln.zGetSurfaceData(surfNum=dummy, code=ln.SDAT_SEMIDIA), 0)
+         
+        # Test the accuracy of values of tilts and restorations
+        # load file again
         ln.zLoadFile(filename)
         numSurfBefore = ln.zGetNumSurf()
-
         firstSurf, lastSurf = 5, 6
         xdec, ydec, xtilt, ytilt, ztilt = 0.25, 0.5, 5.0, 10.0, -15.0
         # get the Thickness and solve on the thickness (if any) on the 
         # last surface to include in tilt-decenter group
         thick = ln.zGetSurfaceData(surfNum=lastSurf, code=ln.SDAT_THICK)
         solve = ln.zGetSolve(surfNum=lastSurf, code=ln.SOLVE_SPAR_THICK)
-        ret = ln.zTiltDecenterElements(firstSurf, lastSurf, xdec, ydec, 
-                                               xtilt, ytilt, ztilt, suppressMsgBox=True)
+        ret = ln.zTiltDecenterElements(firstSurf, lastSurf, xdec, ydec, xtilt, ytilt, ztilt)
         cb1, cb2, dummy = ret
         # Test number of surfaces                                         
         numSurfAfter = ln.zGetNumSurf()
@@ -1762,7 +1855,9 @@ class TestPyZDDEFunctions(unittest.TestCase):
         self.assertEqual(solveDummy, solve)
         # Test the order flags which should be 0 and 1 (default case)
         self.assertEqual(ln.zGetSurfaceParameter(surfNum=cb1, param=6), 0)
-        self.assertEqual(ln.zGetSurfaceParameter(surfNum=cb2, param=6), 1)        
+        self.assertEqual(ln.zGetSurfaceParameter(surfNum=cb2, param=6), 1)
+        if TestPyZDDEFunctions.pRetVar:
+            print('zTiltDecenterElements test successful')          
 
     @unittest.skip("To implement test")
     def test_readZRD(self):
@@ -1852,15 +1947,15 @@ def get_test_file(fileType='seq', settings=False, **kwargs):
         filenames are complete complete paths
     """
     zmxfp = os.path.join(pyzddedirectory, 'ZMXFILES')
-    lensFile = ["Cooke 40 degree field.zmx",
-                "Double Gauss 5 degree field.ZMX",
+    lensFile = ["Cooke_40_degree_field.zmx",
+                "Double_Gauss_5_degree_field.ZMX",
                 "LENS.ZMX",]
-    settingsFile = ["Cooke 40 degree field_unittest.CFG", ]
-    popFiles = ["Fiber Coupling.ZMX", ]
-    popSettingsFile = ["Fiber Coupling_POPunittest.CFG",
-                       "Fiber Coupling_POPunittest_Irradiance.CFG",
-                       "Fiber Coupling_POPunittest_Phase.CFG",
-                       "Fiber Coupling_POPunittest_NoFiberCompute.CFG", ]
+    settingsFile = ["Cooke_40_degree_field_unittest.CFG", ]
+    popFiles = ["Fiber_Coupling.ZMX", ]
+    popSettingsFile = ["Fiber_Coupling_POPunittest.CFG",
+                       "Fiber_Coupling_POPunittest_Irradiance.CFG",
+                       "Fiber_Coupling_POPunittest_Phase.CFG",
+                       "Fiber_Coupling_POPunittest_NoFiberCompute.CFG", ]
     
     lenFileIndex = 0
     setFileIndex = 0    

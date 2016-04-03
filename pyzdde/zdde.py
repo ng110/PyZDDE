@@ -6,7 +6,7 @@
 # Licence:     MIT License
 #              This file is subject to the terms and conditions of the MIT License.
 #              For further details, please refer to LICENSE.txt
-# Revision:    2.0.0a1
+# Revision:    2.0.2
 #-------------------------------------------------------------------------------
 """PyZDDE, which is a toolbox written in Python, is used for communicating
 with ZEMAX using the Microsoft's Dynamic Data Exchange (DDE) messaging
@@ -29,6 +29,7 @@ import re as _re
 import shutil as _shutil
 import warnings as _warnings
 import codecs as _codecs
+
 # Try to import IPython if it is available (for notebook helper functions)
 try:
     from IPython.core.display import display as _display
@@ -113,6 +114,7 @@ _system_aperture = {0 : 'EPD',
                     4 : 'Paraxial working F/#',
                     5 : 'Object cone angle'}
 
+macheps = _sys.float_info.epsilon  # machine epsilon
 
 #%% Helper function for debugging
 def _debugPrint(level, msg):
@@ -149,9 +151,29 @@ isZOperand = zo.isZOperand
 showZOperandList = zo.showZOperandList
 showZOperandDescription = zo.showZOperandDescription
 
+# decorator for automatically push and refresh to and from LDE (Experimental)
+def autopushandrefresh(func): 
+    def wrapped(self, *args, **kwargs):
+        if self.apr: # if automatic push refresh is True
+            if (args[0].startswith('Get') or
+                args[0].startswith('Set') or
+                args[0].startswith('Insert') or 
+                args[0].startswith('Delete')):
+                self._conversation.Request('GetRefresh')
+            reply = func(self, *args, **kwargs)
+            if (args[0].startswith('Set') or 
+                args[0].startswith('Insert') or 
+                args[0].startswith('Delete')):
+                self._conversation.Request('PushLens,1')
+        else:
+            reply = func(self, *args, **kwargs)
+        return reply
+    return wrapped 
+
+
 _global_dde_linkObj = {}
 
-def createLink():
+def createLink(apr=False):
     """Create a DDE communication link with Zemax
 
     Usage: ``import pyzdde.zdde as pyz; ln = pyz.createLink()``
@@ -161,7 +183,8 @@ def createLink():
 
     Parameters
     ----------
-    None
+    apr : bool 
+        if `True`, automatically push and refresh lens to and from LDE to DDE 
 
     Returns
     -------
@@ -182,7 +205,7 @@ def createLink():
     global _MAX_PARALLEL_CONV
     dlen = len(_global_dde_linkObj)
     if dlen < _MAX_PARALLEL_CONV:
-        link = PyZDDE()
+        link = PyZDDE(apr=apr)
         status = link.zDDEInit()
         if not status:
             _global_dde_linkObj[link] = link._appName  # This can be something more useful later
@@ -387,7 +410,6 @@ def _getAppName(appNameDict):
         else:
             return None
 
-
 #%% PyZDDE class
 
 class PyZDDE(object):
@@ -405,7 +427,7 @@ class PyZDDE(object):
     __server = 0
     __appNameDict = _createAppNameDict(_MAX_PARALLEL_CONV)  # {'ZEMAX': False, 'ZEMAX1': False}
 
-    version = '2.0.0a1'
+    version = '2.0.2'
     
     # Other class variables
     # Surface data codes for getting and setting surface data
@@ -541,14 +563,15 @@ class PyZDDE(object):
     ANA_PSF_SAMPLE_8192x8192 = 9 
     ANA_PSF_SAMPLE_16384x16384 = 10
 
-    def __init__(self):
+    def __init__(self, apr=False):
         """Creates an instance of PyZDDE class
 
         Usage: ``ln = pyz.PyZDDE()``
 
         Parameters
         ----------
-        None
+        apr : bool 
+            if `True`, automatically push and refresh lens to and from LDE to DDE
 
         Returns
         -------
@@ -572,6 +595,7 @@ class PyZDDE(object):
         self._connection = False  # 1/0 depending on successful connection or not
         self._macroPath = None    # variable to store macro path
         self._filesCreated = set()   # .cfg & other files to be cleaned at session end
+        self._apr = apr
 
     def __repr__(self):
         return ("PyZDDE(appName=%r, appNum=%r, connection=%r, macroPath=%r)" %
@@ -583,6 +607,16 @@ class PyZDDE(object):
 
     def __eq__(self, other):
         return (self._appNum == other._appNum)
+
+    @property
+    def apr(self):
+        return self._apr
+
+    @apr.setter
+    def apr(self, val):
+        self._apr = val
+
+    
 
     # ZEMAX <--> PyZDDE client connection methods
     #--------------------------------------------
@@ -641,7 +675,7 @@ class PyZDDE(object):
             PyZDDE.__liveCh += 1 # increment the number of live channels
             self._connection = True
             return 0
-
+  
     def close(self):
         """Helper function to close current communication link
 
@@ -671,7 +705,7 @@ class PyZDDE(object):
             Use this method (as ``pyz.closeLink(ln)``) or ``ln.close()``
             if the link was created as ``ln = pyz.createLink()``
         """
-        closeLink(self)
+        return closeLink(self)
 
     def zDDEClose(self):
         """Close the DDE link with Zemax server.
@@ -759,6 +793,7 @@ class PyZDDE(object):
         """
         return self._conversation.GetDDETimeout()
 
+    @autopushandrefresh
     def _sendDDEcommand(self, cmd, timeout=None):
         """Method to send command to DDE client
         """
@@ -1426,22 +1461,32 @@ class PyZDDE(object):
 
         Returns
         -------
-        focal : float
+        EFL : float
             Effective Focal Length (EFL) in lens units,
-        pwfn : float
+        paraWorkFNum : float
             paraxial working F/#,
-        rwfn : float
+        realWorkFNum : float
             real working F/#,
-        pima : float
+        paraImgHeight : float
             paraxial image height, and
-        pmag : float
-            paraxial magnification.
+        paramag : float
+            paraxial magnification. See Notes.
+
+        Notes
+        ----- 
+        The value of the magnification returned by this function is the
+        paraxial magnification. This value doesn't depend on the acutal 
+        image height or the actual location of the image surface from the 
+        principal planes; instead it depends on the paraxial image height.
+        For real magnification see `zGetMagnification()`.  
 
         See Also
         --------
         zGetSystem() :
             Use ``zGetSystem()`` to get general system data,
         zGetSystemProperty()
+        ipzGetFirst()
+        zGetMagnification()
         """
         fd = _co.namedtuple('firstOrderData',
                             ['EFL', 'paraWorkFNum', 'realWorkFNum',
@@ -1642,13 +1687,13 @@ class PyZDDE(object):
 
         Returns
         -------
-        multiConData : tuple
-            the exact elements of ``multiConData`` depends on the value of
-            ``config``
+        multiConData : tuple or None
+            if the MCE is empty `None` is returned. Else, the exact elements of 
+            ``multiConData`` depends on the value of ``config``
 
             If ``config > 0``
                 then the elements of ``multiConData`` are:
-                (value, num_config, num_row, status, pickuprow, pickupconfig,
+                (value, numConfig, numRow, status, pickupRow, pickupConfig,
                 scale, offset)
 
                 The ``status`` is 0 for fixed, 1 for variable, 2 for pickup,
@@ -1657,25 +1702,44 @@ class PyZDDE(object):
 
             If ``config = 0``
                 then the elements of ``multiConData`` are:
-                (operand_type, number1, number2, number3)
+                (operandType, num1, num2, num3)
+                
+                `num1` could be "Surface#", "Surface", "Field#", "Wave#', or 
+                "Ignored". 
+                `num2` could be "Object", "Extra Data Number", or "Parameter".
+                `num3` could be "Property", or "Face#". 
+                See [MCO]_
+
+        References
+        ----------
+        .. [MCO] "Summary of Multi-Configuration Operands," Zemax manual.
 
         See Also
         --------
-        zSetMulticon()
+        zSetMulticon(), zGetConfig()
         """
         cmd = "GetMulticon,{config:d},{row:d}".format(config=config,row=row)
         reply = self._sendDDEcommand(cmd)
         if config: # if config > 0
+            mcd = _co.namedtuple('MCD', ['value', 'numConfig', 'numRow', 'status', 
+                                         'pickupRow', 'pickupConfig', 'scale',
+                                         'offset'])
             rs = reply.split(",")
-            if '' in rs: # if the MCE is "empty"
-                rs[rs.index('')] = '0'
-            multiConData = [float(rs[i]) if (i==0 or i==6 or i==7) else int(rs[i])
-                                                         for i in range(len(rs))]
+
+            if len(rs) < 8:
+                if (self.zGetConfig() == (1, 1, 1)): # probably nothing set in MCE
+                    return None 
+                else:
+                    assert False, "Unexpected reply () from Zemax.".format(reply)
+            else:
+                multiConData = [float(rs[i]) if (i==0 or i==6 or i==7) else int(rs[i])
+                                                              for i in range(len(rs))]
         else: # if config == 0
+            mcd = _co.namedtuple('MCD', ['operandType', 'num1', 'num2', 'num3'])
             rs = reply.split(",")
             multiConData = [int(elem) for elem in rs[1:]]
             multiConData.insert(0, rs[0])
-        return tuple(multiConData)
+        return mcd._make(multiConData)
 
     def zGetName(self):
         """Returns the name of the lens
@@ -2581,11 +2645,11 @@ class PyZDDE(object):
         ENPD : float
             entrance pupil diameter (in lens units)
         ENPP : float
-            entrance pupil position (in lens units)
+            entrance pupil position from the first surface (in lens units)
         EXPD : float
             exit pupil diameter (in lens units)
         EXPP : float
-            exit pupil position (in lens units)
+            exit pupil position from the image plane (in lens units)
         apodization_type : integer
             the apodization type is indicated as follows:
 
@@ -2743,8 +2807,19 @@ class PyZDDE(object):
         Returns
         -------
         solveData : tuple
-            tuple is depending on the code value according to the table
+            tuple is depending on the code value according to the table;
             returns -1 if error occurs
+
+        Examples
+        -------- 
+        >>> solvetype, param1, param2, param3, pickup = ln.zGetSolve(3, ln.SOLVE_SPAR_THICK)
+
+        In the above example, since the solve is on Thickness (code=ln.SOLVE_SPAR_THICK), 
+        if the `solvetype` is "Position" (7), then `param1` is "From Surface", 
+        `param2` is "Length", and `param3` and `pickup` are un-specified. So, a typical 
+        output could be `(7, 3.0, 0.0, 0.0, 0)`. Instead of "Position", if the `solvetype`
+        is "Pickup" (5), then `param1` is "From Surface", `param2` is "Scale Factor", 
+        `param3` is "Offset", and `pickup` is "Pickup column"     
 
         Notes
         -----
@@ -3162,7 +3237,7 @@ class PyZDDE(object):
         ----------
         textFileName : string
             name of the file to be created including the full path and
-            extension
+            extension.
         analysisType : string
             3 letter case-sensitive label that indicates the type of the
             analysis to be performed. They are identical to the button
@@ -3761,7 +3836,6 @@ class PyZDDE(object):
         ----------
         filename : string
             full path of the ZEMAX file to be loaded.
-            For example: "C:\ZEMAX\Samples\cooke.zmx"
         append : integer, optional
             if a non-zero value of append is passed, then the new file is
             appended to the current file starting at the surface number
@@ -3771,14 +3845,42 @@ class PyZDDE(object):
         -------
         status : integer
             0 = file successfully loaded;
-            -999 = file could not be loaded (check if the file really
-                   exists, or check the path;
+            -999 = file could not be loaded (check if the filename pattern is 
+                problematic or check the path);
             -998 = the command timed out;
             other = the upload failed.
 
+        Notes
+        -----
+        Filename patterns that are fine:
+
+            a. "C:\\ZEMAX\\Samples\\cooke.zmx"
+            b. "C:\ZEMAX\Samples\cooke.zmx"
+            c. "C:\\ZEMAX\\My Documents\\Sample\\cooke.zmx"  # spaces in file 
+               path is OK.
+
+        Problematic filename patterns:
+
+            a. "C:\ZEMAX\Samples\Example, cooke.zmx"   # a comma (,) in the 
+               filename is problematic.
+
+        Examples
+        -------- 
+        >>> lens = "C:\ZEMAX\Samples\cooke.zmx"
+        >>> ln.zLoadFile(lens)
+        0
+        >>> lens = os.path.join(ln.zGetPath()[1], 'Sequential', 'Objectives', 
+                               'Cooke 40 degree field.zmx')
+        >>> ln.zLoadFile(lens)
+        0
+        >>> usr = os.path.expandvars("%userprofile%")
+        >>> zmf = 'Double Gauss 5 degree field.zmx'
+        >>> lens = os.path.join(usr, 'Documents\Zemax\Samples\Sequential\Objectives', zmf)
+        0
+
         See Also
         --------
-        zSaveFile(), zGetPath(), zPushLens(), zuiLoadFile()
+        zSaveFile(), zGetPath(), zPushLens()
         """
         reply = None
         isAbsPath = _os.path.isabs(fileName)
@@ -4853,7 +4955,7 @@ class PyZDDE(object):
 
         See Also
         --------
-        zGetConfig()
+        zGetConfig(), zSetMulticon()
         """
         reply = self._sendDDEcommand("SetConfig,{:d}".format(config))
         rs = reply.split(',')
@@ -5049,7 +5151,7 @@ class PyZDDE(object):
         If ``config > 0``, then the function is used to set data in the
         MCE using the following syntax:
 
-        ``ln.zSetMulticon(config, row, value, status, pickuprow, pickupConfig, scale, offset) -> multiConData``
+        ``ln.zSetMulticon(config, row, value, status, pickupRow, pickupConfig, scale, offset) -> multiConData``
 
         Parameters
         ----------
@@ -5062,23 +5164,23 @@ class PyZDDE(object):
         status : integer
             the ``status`` is 0 for fixed, 1 for variable, 2 for pickup,
             and 3 for thermal pickup.
-            If ``status`` is 2 or 3, the ``pickuprow`` and ``pickupconfig``
+            If ``status`` is 2 or 3, the ``pickupRow`` and ``pickupConfig``
             values indicate the source data for the pickup solve.
-        pickuprow : integer
+        pickupRow : integer
             see ``status``
-        pickupconfig : integer
+        pickupConfig : integer
             see ``status``
         scale : float
-            ?
+            scale factor for the pickup value 
         offset : float
-            ?
+            offset to add to the pickup value. 
 
         Returns
         -------
-        multiConData : tuple
+        multiConData : namedtuple
             the ``multiConData`` is a 8-tuple whose elements are:
-            (value, num_config, num_row, status, pickuprow,
-            pickupconfig, scale, offset)
+            (value, numConfig, numRow, status, pickupRow,
+            pickupConfig, scale, offset)
 
 
         [``USAGE TYPE - II``]
@@ -5086,7 +5188,7 @@ class PyZDDE(object):
         If the ``config = 0``, the function may be used to set the operand
         type and number data using the following syntax:
 
-        ``ln.zSetMulticon(0, row, operand_type, number1, number2, number3) -> multiConData``
+        ``ln.zSetMulticon(0, row, operandType, num1, num2, num3) -> multiConData``
 
         Parameters
         ----------
@@ -5094,25 +5196,34 @@ class PyZDDE(object):
             for usage type II
         row : integer
             row or operand number in the MCE
-        operand_type : string
+        operandType : string
             the operand type, such as 'THIC', 'WLWT', etc.
-        number1 : integer
-            number data. See [MCO]_
-        number2 : integer
-            number data. See [MCO]_
-        number3 : integer
-            number data. See [MCO]_
+        num1 : integer
+            number data. `num1` could be "Surface#", "Surface", "Field#", 
+            "Wave#', or "Ignored". See [MCO]_
+        num2 : integer
+            number data. `num2` could be "Object", "Extra Data Number", 
+            or "Parameter". See [MCO]_
+        num3 : integer
+            number data. `num3` could be "Property", or "Face#". See [MCO]_
 
         Returns
         -------
-        multiConData is a 4-tuple whose elements are:
-        (operand_type,number1,number2,number3)
+        multiConData is a 4-tuple (named) whose elements are:
+        (operandType, num1, num2, num3)
 
         Examples
         --------
         The following example shows the USEAGE TYPE - I:
 
         >>> multiConData = ln.zSetMulticon(1, 5, 5.6, 0, 0, 0, 1.0, 0.0)
+
+        The following two lines show how to set a variable solve on the operand 
+        on the 4th row for configuration number 1 (the third line is the output):
+
+        >>> config=1; row=4; value=0.5; status=1; pickupRow=0; pickupConfig=0; scale=1; offset=0
+        >>> ln.zSetMulticon(config, row, value, status, pickupRow, pickupConfig, scale, offset)
+        MCD(value=0.5, numConfig=2, numRow=4, status=1, pickupRow=0, pickupConfig=0, scale=1.0, offset=0.0)
 
         The following example shows the USAGE TYPE - II:
 
@@ -5152,14 +5263,18 @@ class PyZDDE(object):
         # If the raise is removed, change code accordingly in the unittest.
         reply = self._sendDDEcommand(cmd)
         if config: # if config > 0
+            mcd = _co.namedtuple('MCD', ['value', 'numConfig', 'numRow', 'status',
+                                         'pickupRow', 'pickupConfig', 'scale',
+                                         'offset'])
             rs = reply.split(",")
             multiConData = [float(rs[i]) if (i == 0 or i == 6 or i== 7) else int(rs[i])
                                                  for i in range(len(rs))]
         else: # if config == 0
+            mcd = _co.namedtuple('MCD', ['operandType', 'num1', 'num2', 'num3'])
             rs = reply.split(",")
             multiConData = [int(elem) for elem in rs[1:]]
             multiConData.insert(0,rs[0])
-        return tuple(multiConData)
+        return mcd._make(multiConData)
 
     def zSetNSCObjectData(self, surfNum, objNum, code, data):
         """Sets the various data for NSC objects.
@@ -5693,6 +5808,10 @@ class PyZDDE(object):
                 data values 1+)     
     
                 end-of-table
+        4. If a parameter in the LDE is also present in the Multi-Configuration-Editor, 
+           Zemax doesn't allow the solve on that parameter to be set in the LDE. Instead,
+           change the "status" of that parameter to set a solve in the MCE using the 
+           command `zSetMulticon()`.
         
         Examples
         --------
@@ -5711,6 +5830,7 @@ class PyZDDE(object):
 
         See Also
         --------
+        zSetMulticon() : for setting solves on parameters in Multi-Configuration-Editor; 
         zGetSolve(), zGetNSCSolve(), zSetNSCSolve(), zRemoveVariables().
         """
         if not solveData:
@@ -6265,7 +6385,7 @@ class PyZDDE(object):
         n : 0
             the function sets general wavelength data
         arg1 : integer
-            primary wavelength value to set
+            primary wavelength number to set
         arg2 : integer
             total number of wavelengths to set
 
@@ -6379,13 +6499,11 @@ class PyZDDE(object):
             retVal = 0
         return retVal
 
-# ****************************************************************
-#                      ADDITIONAL FUNCTIONS
-# ****************************************************************
+    #%% ADDITIONAL FUNCTIONS 
 
-# -------------------
-# Editor functions
-# -------------------
+    # -------------------------------------------------------
+    # Editor function for both getting and setting parameters
+    # -------------------------------------------------------
     def zGetOperandRow(self, row):
         """Returns a row of the Multi Function Editor
 
@@ -6398,8 +6516,9 @@ class PyZDDE(object):
         -------
         opertype : string
             operand type, column 1 in MFE
-        int1 : integer
-            column 2 in MFE
+        int1 : integer or string 
+            column 2 in MFE. The column 2 is a string, usually when opertype 
+            is 'BLNK', and there is some comments in the second column 
         int2 : integer
             column 3 in MFE
         data1 : float
@@ -6496,9 +6615,71 @@ class PyZDDE(object):
                 self.zSetOperand(row=row, column=i+12, value=val)
         return self.zGetOperandRow(row)
 
-# -------------------
-# System functions
-# -------------------
+    # -------------------
+    # System functions
+    # -------------------
+    def zGetAngularMagnification(self, wave=None):
+        """Get angular magnification of paraxial system.
+
+        The angular magnification is defined as the ratio of the image space 
+        paraxial chief ray angle to the object space paraxial chief ray angle 
+
+        Parameters
+        ---------- 
+        wave : integer, optional 
+            the wavelength defined by `wave`. If `None`, the primary wave 
+            number is used.
+
+        Returns
+        ------- 
+        amag : real 
+            angular magnification, at least one non-zero field point is 
+            defined in the Field Data Editor.
+            Returns error code -999 if only on-axis field is defined. 
+            See Notes.
+
+        Notes
+        ----- 
+        Zemax returns zero (0) for angular magnification if the only field 
+        defined in the field editor is the on-axis field.
+
+        See Also
+        -------- 
+        zGetPupilMagnification()    
+        """
+        if wave==None:
+            wave = self.zGetPrimaryWave()
+        if self.zAnyOffAxisField():
+            return self.zOperandValue('AMAG', wave)
+        else:
+            return -999
+
+    def zGetMagnification(self):
+        """Returns the real magnification evaluated as the ratio of the image 
+        height to the object height 
+
+        Parameters
+        ---------- 
+        None 
+
+        Returns
+        ------- 
+        mag : real 
+            real magnification. see Notes.
+
+        Notes
+        ----- 
+        1. The function returns the real magnification of the system. It is 
+           affected by distortions, and the actual location of the image 
+           surface. For paraxial magnification use `zGetFirst().paraMag`
+        """
+        objHt = self.zGetSemiDiameter(0)
+        if objHt:
+            rtd = self.zGetTrace(waveNum=1, mode=0, surf=-1, hx=0, hy=1, px=0, py=0)        
+            return rtd.y/objHt
+        else:
+            return 0.0
+
     def zGetNumField(self):
         """Returns the total number of fields defined
 
@@ -6514,6 +6695,26 @@ class PyZDDE(object):
             number of fields defined
         """
         return self.zGetSystemProperty(101)
+
+    def zAnyOffAxisField(self):
+        """Returns `True` if at least one off-axis X-Field or Y-Field is 
+        defined in the Field Data Editor.
+
+        Fields with zero weights are also considered to be "defined".
+
+        Parameters
+        ---------- 
+        None 
+
+        Returns
+        ------- 
+        retVal : bool 
+            `True` if any off-axis field is found, else `False`
+        """
+        fdata = self.zGetFieldTuple()
+        fx = [f[0] for f in fdata]
+        fy = [f[1] for f in fdata]
+        return any(fy) or any(fx)
 
     def zGetFieldTuple(self):
         """Get all field data in a single n-tuple.
@@ -6879,11 +7080,11 @@ class PyZDDE(object):
                 mode = 0  # sequential
         return (mode,tuple(nscSurfNums))
         
-# -------------------
-# Analysis functions
-# -------------------
-
-# Spot diagram analysis functions
+    # -------------------
+    # Analysis functions
+    # -------------------
+    
+    # Spot diagram analysis functions
     def zSpiralSpot(self, hx, hy, waveNum, spirals, rays, mode=0):
         """Returns positions and intensity of rays traced in a spiral
         over the entrance pupil to the image surface.
@@ -6940,7 +7141,7 @@ class PyZDDE(object):
                 # !!! FIX raise an error here
         return (x, y, z, intensity)
 
-# POP analysis functions
+    # POP analysis functions
     def zGetPOP(self, settingsFile=None, displayData=False, txtFile=None,
                 keepFile=False, timeout=None):
         """Returns Physical Optics Propagation (POP) data
@@ -7174,8 +7375,79 @@ class PyZDDE(object):
         ----------
         settingsFile : string
             filename of the settings file including path and extension
-        others :
-            see the parameter definitions of ``zSetPOPSettings()``
+        startSurf : integer, optional
+            the starting surface (in General Tab)
+        endSurf : integer, optional
+            the end surface (in General Tab)
+        field : integer, optional
+            the field number (in General Tab)
+        wave : integer, optional
+            the wavelength number (in General Tab)
+        auto : integer, optional
+            simulates the pressing of the "auto" button which chooses
+            appropriate X and Y widths based upon the sampling and
+            other settings (in Beam Definition Tab)
+        beamType : integer (0...6), optional
+            0 = Gaussian Waist; 1 = Gaussian Angle; 2 = Gaussian Size +
+            Angle; 3 = Top Hat; 4 = File; 5 = DLL; 6 = Multimode.
+            (in Beam Definition Tab)
+        paramN : 2-tuple, optional
+            sets beam parameter n, for example ((1, 4),(0.1, 0.5)) sets
+            parameters 1 and 4 to 0.1 and 0.5 respectively. These
+            parameter names and values change depending upon the beam type
+            setting. For example, for the Gaussian Waist beam, n=1 for
+            Waist X, 2 for Waist Y, 3 for Decenter X, 4 for Decenter Y,
+            5 for Aperture X, 6 for Aperture Y, 7 for Order X, and 8 for
+            Order Y (in Beam Definition Tab)
+        pIrr : float, optional
+            sets the normalization by peak irradiance. It is the initial
+            beam peak irradiance in power per area. It is an alternative
+            to Total Power (tPow) [in Beam Definition Tab]
+        tPow : float, optional
+            sets the normalization by total beam power. It is the initial
+            beam total power. This is an alternative to Peak Irradiance
+            (pIrr) [in Beam Definition Tab]
+        sampx : integer (1...10), optional
+            the X direction sampling. 1 for 32; 2 for 64; 3 for 128;
+            4 for 256; 5 for 512; 6 for 1024; 7 for 2048; 8 for 4096;
+            9 for 8192; 10 for 16384; (in Beam Definition Tab)
+        sampy : integer (1...10), optional
+            the Y direction sampling. 1 for 32; 2 for 64; 3 for 128;
+            4 for 256; 5 for 512; 6 for 1024; 7 for 2048; 8 for 4096;
+            9 for 8192; 10 for 16384; (in Beam Definition Tab)
+        srcFile : string, optional
+            The file name if the starting beam is defined by a ZBF file,
+            DLL, or multimode file; (in Beam Definition Tab)
+        widex : float, optional
+            the initial X direction width in lens units; 
+            (X-Width in Beam Definition Tab)
+        widey : float, optional
+            the initial Y direction width in lens units;
+            (Y-Width in Beam Definition Tab)
+        fibComp : integer (1/0), optional
+            use 1 to check the fiber coupling integral ON, 0 for OFF
+            (in Fiber Data Tab)
+        fibFile : string, optional
+            the file name if the fiber mode is defined by a ZBF or DLL
+            (in Fiber Data Tab)
+        fibType : string, optional
+            use the same values as ``beamType`` above, except for
+            multimode which is not yet supported
+            (in Fiber Data Tab)
+        fparamN : 2-tuple, optional
+            sets fiber parameter n, for example ((2,3),(0.5, 0.6)) sets
+            parameters 2 and 3 to 0.5 and 0.6 respectively. See the hint
+            for ``paramN`` (in Fiber Data Tab)
+        ignPol : integer (0/1), optional
+            use 1 to ignore polarization, 0 to consider polarization
+            (in Fiber Data Tab)
+        pos : integer (0/1), optional 
+            fiber position setting. use 0 for chief ray, 1 for surface vertex
+            (in Fiber Data Tab)
+        tiltx : float, optional
+            tilt about X in degrees (in Fiber Data Tab)
+        tilty : float, optional
+            tilt about Y in degrees (in Fiber Data Tab)
 
         Returns
         -------
@@ -7396,7 +7668,7 @@ class PyZDDE(object):
                                     fibType, fparamN, ignPol, pos, tiltx, tilty)
             return dst
 
-# FFT and Huygens PSF, MTF analysis functions
+    # FFT and Huygens PSF, MTF analysis functions
     def zGetPSFCrossSec(self, which='fft', settingsFile=None, txtFile=None,
                         keepFile=False, timeout=120):
         """Returns the cross-section data of FFT or Huygens PSF analysis
@@ -7524,7 +7796,7 @@ class PyZDDE(object):
         psfInfo : named tuple
             meta data about the PSF analysis data, such as data spacing
             (microns), data area (microns wide), pupil and image grid
-            sizes, and center point information
+            sizes, center point, and center/reference coordinate information
         psfGridData : 2D list
             the two-dimensional list of the PSF data
 
@@ -7549,23 +7821,39 @@ class PyZDDE(object):
         data_spacing = float(_re.search(r'\d{1,3}\.\d{2,6}', data_spacing_line).group())
         data_area_line = line_list[_getFirstLineOfInterest(line_list, 'Data area')]
         data_area = float(_re.search(r'\d{1,5}\.\d{2,6}', data_area_line).group())
+        if which=='huygens':
+            ctr_ref_line = line_list[_getFirstLineOfInterest(line_list, 'Center coordinates')]
+        else:
+            ctr_ref_line = line_list[_getFirstLineOfInterest(line_list, 'Reference Coordinates')]
+        ctr_ref_x, ctr_ref_y = [float(i) for i in _re.findall('-?\d\.\d{4,10}[Ee][-\+]\d{3}', ctr_ref_line)]
         img_grid_line = line_list[_getFirstLineOfInterest(line_list, 'Image grid size')]
         img_grid_x, img_grid_y = [int(i) for i in _re.findall(r'\d{2,5}', img_grid_line)]
         pupil_grid_line = line_list[_getFirstLineOfInterest(line_list, 'Pupil grid size')]
         pupil_grid_x, pupil_grid_y = [int(i) for i in _re.findall(r'\d{2,5}', pupil_grid_line)]
         center_point_line = line_list[_getFirstLineOfInterest(line_list, 'Center point')]
         center_point_x, center_point_y = [int(i) for i in _re.findall(r'\d{2,5}', center_point_line)]
+
         # The 2D data
         pat = (r'(-?\d\.\d{4,6}[Ee][-\+]\d{3}\s*)' + r'{{{num}}}'
                .format(num=img_grid_x))
         start_line = _getFirstLineOfInterest(line_list, pat)
         psfGridData = _get2DList(line_list, start_line, img_grid_y)
 
-        psfi = _co.namedtuple('PSFinfo', ['dataSpacing', 'dataArea', 'pupilGridX',
-                                          'pupilGridY', 'imgGridX', 'imgGridY',
-                                          'centerPtX', 'centerPtY'])
+        if which=='huygens':
+                psfi = _co.namedtuple('PSFinfo', ['dataSpacing', 'dataArea', 'pupilGridX',
+                                                  'pupilGridY', 'imgGridX', 'imgGridY',
+                                                  'centerPtX', 'centerPtY',
+                                                  'centerCoordX', 'centerCoordY'])
+        else:
+                psfi = _co.namedtuple('PSFinfo', ['dataSpacing', 'dataArea', 'pupilGridX',
+                                                  'pupilGridY', 'imgGridX', 'imgGridY',
+                                                  'centerPtX', 'centerPtY',
+                                                  'refCoordX', 'refCoordY'])
+
         psfInfo = psfi(data_spacing, data_area, pupil_grid_x, pupil_grid_y,
-                       img_grid_x, img_grid_y, center_point_x, center_point_y)
+                               img_grid_x, img_grid_y, center_point_x, center_point_y,
+                               ctr_ref_x, ctr_ref_y)
+
         if not keepFile:
             _deleteFile(textFileName)
         return (psfInfo, psfGridData)
@@ -7580,9 +7868,27 @@ class PyZDDE(object):
         ----------
         settingsFile : string
             filename of the settings file including path and extension
-        others :
-            see the parameter definitions of
-            ``zSetFFTPSFCrossSecSettings()``
+        dtype : integer (0-9), optional
+            0 = x-linear, 1 = y-linear, 2 = x-log, 3 = y-log, 4 = x-phase,
+            5 = y-phase, 6 = x-real, 7 = y-real, 8 = x-imaginary,
+            9 = y-imaginary.
+        row : integer, optional
+            the row number (for x scan) or column number (for y scan) or
+            use 0 for center.
+        sample : integer, optional
+            the sampling. 1 = 32x32; 2 = 64x64; 3 = 128x128; 4 = 256x256;
+            5 = 512x512; 6 = 1024x1024; 7 = 2048x2048; 8 = 4096x4096;
+            9 = 8192x8192; 10 = 16384x16384;
+        wave : integer, optional
+            the wavelength number, use 0 for polychromatic.
+        field : integer, optional
+            the field number
+        pol : integer (0/1), optional
+            the polarization. 0 for unpolarized, 1 for polarized.
+        norm : integer (0/1), optional
+            normalization. 0 for unnormalized, 1 for unity normalization
+        scale : float, optional
+            the plot scale
 
         Returns
         -------
@@ -7719,8 +8025,24 @@ class PyZDDE(object):
         ----------
         settingsFile : string
             filename of the settings file including path and extension
-        others :
-            see the parameter definitions of ``zSetFFTPSFSettings()``
+        dtype : integer (0-4), optional
+            0 = linear, 1 = log, 2 = phase, 3 = real, 4 = imaginary.
+        sample : integer, optional
+            the (pupil) sampling. 1 = 32x32; 2 = 64x64; 3 = 128x128;
+            4 = 256x256; 5 = 512x512; 6 = 1024x1024; 7 = 2048x2048;
+            8 = 4096x4096; 9 = 8192x8192; 10 = 16384x16384;
+        wave : integer, optional
+            the wavelength number, use 0 for polychromatic.
+        field : integer, optional
+            the field number
+        surf : integer, optional
+            the surface number. Use 0 for image
+        pol : integer (0/1), optional
+            the polarization. 0 for unpolarized, 1 for polarized.
+        norm : integer (0/1), optional
+            normalization. 0 for unnormalized, 1 for unity normalization
+        imgDelta : float, optional
+            the image point spacing in micrometers
 
         Returns
         -------
@@ -7855,9 +8177,24 @@ class PyZDDE(object):
         ----------
         settingsFile : string
             filename of the settings file including path and extension
-        others :
-            see the parameter definitions of
-            ``zSetHuygensPSFCrossSecSettings()``
+        pupilSample : integer, optional
+            the pupil sampling. 1 = 32x32; 2 = 64x64; 3 = 128x128;
+            4 = 256x256; 5 = 512x512; 6 = 1024x1024; 7 = 2048x2048;
+            8 = 4096x4096; 9 = 8192x8192; 10 = 16384x16384;
+        imgSample : integer, optional
+            the image sampling. 1 = 32x32; 2 = 64x64; 3 = 128x128;
+            4 = 256x256; 5 = 512x512; 6 = 1024x1024; 7 = 2048x2048;
+            8 = 4096x4096; 9 = 8192x8192; 10 = 16384x16384;
+        wave : integer, optional
+            the wavelength number, use 0 for polychromatic
+        field : integer, optional
+            the field number
+        imgDelta : float, optional
+            the image point spacing in micrometers
+        dtype : integer (0-9), optional
+            0 = x-linear, 1 = y-log, 2 = y-linear, 3 = y-log, 4 = x-real,
+            5 = y-real, 6 = x-imaginary, 7 = y-imaginary, 8 = x-phase,
+            9 = y-phase.
 
         Returns
         -------
@@ -7988,8 +8325,23 @@ class PyZDDE(object):
         ----------
         settingsFile : string
             filename of the settings file including path and extension
-        others :
-            see the parameter definitions of ``zSetHuygensPSFSettings()``
+        pupilSample : integer, optional
+            the pupil sampling. 1 = 32x32; 2 = 64x64; 3 = 128x128;
+            4 = 256x256; 5 = 512x512; 6 = 1024x1024; 7 = 2048x2048;
+            8 = 4096x4096; 9 = 8192x8192; 10 = 16384x16384;
+        imgSample : integer, optional
+            the image sampling. 1 = 32x32; 2 = 64x64; 3 = 128x128;
+            4 = 256x256; 5 = 512x512; 6 = 1024x1024; 7 = 2048x2048;
+            8 = 4096x4096; 9 = 8192x8192; 10 = 16384x16384;
+        wave : integer, optional
+            the wavelength number, use 0 for polychromatic
+        field : integer, optional
+            the field number
+        imgDelta : float, optional
+            the image point spacing in micrometers
+        dtype : integer (0-8), optional
+            0 = linear, 1 = log -1, 2 = log -2, 3 = log -3, 4 = log -4,
+            5 = log -5, 6 = real, 7 = imaginary, 8 = phase.
 
         Returns
         -------
@@ -8213,9 +8565,27 @@ class PyZDDE(object):
         ----------
         settingsFile : string
             filename of the settings file including path and extension
-        others :
-            see the parameter definitions of
-            ``zSetFFTMTFSettings()``
+        sample : integer, optional
+            the sampling. 1 = 32x32; 2 = 64x64; 3 = 128x128; 4 = 256x256;
+            5 = 512x512; 6 = 1024x1024; 7 = 2048x2048; 8 = 4096x4096;
+            9 = 8192x8192; 10 = 16384x16384;
+        wave : integer, optional
+            the wavelength number, use 0 for polychromatic.
+        field : integer, optional
+            the field number, 0 for all
+        dtype : integer (0-4), optional
+            0 = modulation, 1 = real, 2 = imaginary, 3 = phase, 4 = square
+            wave.
+        surf : integer, optional
+            the surface number. Use 0 for image
+        maxFreq : real, optional
+            the maximum frequency, use 0 for default
+        showDiff : integer (0/1)
+            show diffraction limit, 0 for no, 1 for yes
+        pol : integer (0/1), optional
+            the polarization. 0 for unpolarized, 1 for polarized.
+        useDash : integer (0/1)
+            use dashes, 0 for no, 1 for yes
 
         Returns
         -------
@@ -8353,8 +8723,30 @@ class PyZDDE(object):
         ----------
         settingsFile : string
             filename of the settings file including path and extension
-        others :
-            see the parameter definitions of ``zSetHuygensMTFSettings()``
+        pupilSample : integer, optional
+            the pupil sampling. 1 = 32x32; 2 = 64x64; 3 = 128x128;
+            4 = 256x256; 5 = 512x512; 6 = 1024x1024; 7 = 2048x2048;
+            8 = 4096x4096; 9 = 8192x8192; 10 = 16384x16384;
+        imgSample : integer, optional
+            the image sampling. 1 = 32x32; 2 = 64x64; 3 = 128x128;
+            4 = 256x256; 5 = 512x512; 6 = 1024x1024; 7 = 2048x2048;
+            8 = 4096x4096; 9 = 8192x8192; 10 = 16384x16384;
+        imgDelta : float, optional
+            the image point spacing in micrometers
+        config : integer, optional
+            the configuration number. Use 0 for all, 1 for current, etc.
+        wave : integer, optional
+            the wavelength number. Use 0 for polychromatic
+        field : integer, optional
+            the field number
+        dtype : integer, optional
+            the data type. Currently only 0 is supported
+        maxFreq : float, optional
+            the maximum spatial frequency
+        pol : integer, optional
+            polarization. 0 for no, 1 for yes
+        useDash : integer, optional
+            use dashes. 0 for no, 1 for yes
 
         Returns
         -------
@@ -8486,7 +8878,7 @@ class PyZDDE(object):
                                            pol, useDash)
             return dst
 
-# Image simulation functions
+    # Image simulation functions
     def zGetImageSimulation(self, settingsFile=None, txtFile=None, keepFile=False,
                             timeout=120):
         """Returns image simulation analysis results
@@ -8524,7 +8916,9 @@ class PyZDDE(object):
         -------
         imgInfo : named tuple
             meta data about the image analysis data containing 'xpix',
-            'ypix', 'objHeight', 'fieldPos', 'imgW', and 'imgH'
+            'ypix', 'objHeight', 'fieldPos', 'imgW', and 'imgH'. PSF 
+            Grid data doesn't have `imgW` and `imgH` and Source bitmap 
+            image data only has `xpix` and `ypix`. 
         imgData : 3D list
             the 3D list containing the RGB values of the output image.
             The first dimension of ``imgData`` represents height (rows),
@@ -8533,16 +8927,41 @@ class PyZDDE(object):
 
         Examples
         --------
-        In the following example the image simulation function is called
-        with default arguments, and the returned data is plotted using
-        matplotlib's imshow function after converting the data into a
-        Numpy (np) array.
+        In the following example the image simulation function is called with 
+        default arguments, and the returned data is plotted using matplotlib's 
+        imshow function after converting the data into a Numpy (np) array.
 
-        >>> img_info, img_data = ln.zGetImageSimulationData()
-        >>> img_data_np = np.array(img_data, dtype='uint8')
-        >>> left, right = -img_info.imgW/2, img_info.imgW/2
-        >>> bottom, top = -img_info.imgH/2, img_info.imgH/2
-        >>> plt.imshow(img_data_np, extent=[left, right, bottom, top])
+        >>> cfgfile = ln.zSetImageSimulationSettings(image='RGB_CIRCLES.BMP', height=1)
+        >>> img_info, img_data = ln.zGetImageSimulationData(settingsFile=cfgfile)
+        >>> img = np.array(img_data, dtype='uint8')
+        >>> fig, ax = plt.subplots(1,1, figsize=(10, 8))
+        >>> if len(img_info)==6: # image simulation data
+        >>>     bottom, top = -img_info.imgH/2, img_info.imgH/2
+        >>>     left, right = -img_info.imgW/2, img_info.imgW/2
+        >>>     extent=[left, right, bottom, top]
+        >>>     xl, yl = 'Image width (mm)', 'Image height (mm)'
+        >>>     t = 'Simulated Image'
+        >>> elif len(img_info)==4: # psf grid data
+        >>>     bottom, top = -img_info.objHeight/2, img_info.objHeight/2
+        >>>     aratio = img_info.xpix/img_info.ypix
+        >>>     left, right =  bottom*aratio, top*aratio
+        >>>     extent=[left, right, bottom, top]
+        >>>     xl, yl = 'Field width (mm)', 'Field height (mm)'
+        >>>     t = 'PSF Grid at field pos {:2.2f}'.format(img_info.fieldPos)
+        >>> else: # source bitmap
+        >>>     extent = [0, img_info.xpix, 0, img_info.ypix]
+        >>>     xl = '{} pixels wide'.format(img_info.xpix) 
+        >>>     yl = '{} pixels high'.format(img_info.ypix)
+        >>>     t = 'Source Bitmap'
+        >>> ax.imshow(img, extent=extent, interpolation='none')
+        >>> ax.set_xlabel(xl); ax.set_ylabel(yl); ax.set_title(t)
+        >>> plt.show()
+
+        Notes
+        ----- 
+        It is recommended that a settings files is first generated using the 
+        ``zSetImageSimulationSettings()`` functions prior to calling 
+        ``zGetImageSimulation()``.
 
         See Also
         --------
@@ -8550,26 +8969,51 @@ class PyZDDE(object):
         """
         settings = _txtAndSettingsToUse(self, txtFile, settingsFile, 'Sim')
         textFileName, cfgFile, getTextFlag = settings
+
         ret = self.zGetTextFile(textFileName, 'Sim', cfgFile, getTextFlag,
                                 timeout)
-        assert ret == 0
+        assert ret == 0, 'zGetTextFile() returned error code {}'.format(ret)
         line_list = _readLinesFromFile(_openFile(textFileName))
 
         # Meta data
+        data = None
+        data_line = line_list[_getFirstLineOfInterest(line_list, 'Data')]
+        dataType = data_line.split(':')[1].strip()
+        if dataType == 'Simulated Image':
+            data = 'img'
+        elif dataType == 'PSF Grid':
+            data = 'psf'
+        else: # source bitmap
+            data = 'src'
+        
         bm_ht_line = line_list[_getFirstLineOfInterest(line_list, 'Bitmap Height')]
         bm_ht = int(_re.search(r'\b\d{1,5}\b', bm_ht_line).group()) # pixels
         bm_wd_line = line_list[_getFirstLineOfInterest(line_list, 'Bitmap Width')]
         bm_wd = int(_re.search(r'\b\d{1,5}\b', bm_wd_line).group())   # pixels
-        obj_ht_line = line_list[_getFirstLineOfInterest(line_list, 'Object Height')]
-        obj_ht = float(_re.search(r'\b-?\d{1,3}\.\d{1,5}\b', obj_ht_line).group())
-        fld_pos_line = line_list[_getFirstLineOfInterest(line_list, 'Field position')]
-        fld_pos = float(_re.search(r'\b-?\d{1,3}\.\d{1,5}\b', fld_pos_line).group())
-        img_siz_line = line_list[_getFirstLineOfInterest(line_list, 'Image Size')]
-        pat = r'\d{1,3}\.\d{4,6}'
-        img_wd, img_ht = [float(i) for i in _re.findall(pat, img_siz_line)] # physical units
-        img_info = _co.namedtuple('ImgSimInfo', ['xpix', 'ypix', 'objHeight',
-                                  'fieldPos', 'imgW', 'imgH'])
-        img_info_data = img_info._make([bm_wd, bm_ht, obj_ht, fld_pos, img_wd, img_ht])
+        
+        if data=='img' or data=='psf':
+            obj_ht_line = line_list[_getFirstLineOfInterest(line_list, 'Object Height')]
+            obj_ht = float(_re.search(r'\b-?\d{1,3}\.\d{1,5}\b', obj_ht_line).group())
+            fld_pos_line = line_list[_getFirstLineOfInterest(line_list, 'Field position')]
+            fld_pos = float(_re.search(r'\b-?\d{1,3}\.\d{1,5}\b', fld_pos_line).group())
+        
+        if data=='img':
+            img_siz_line = line_list[_getFirstLineOfInterest(line_list, 'Image Size')]
+            pat = r'\d{1,3}\.\d{4,6}'
+            img_wd, img_ht = [float(i) for i in _re.findall(pat, img_siz_line)] # physical units
+
+        if data=='img':
+            img_info = _co.namedtuple('ImgSimInfo', ['xpix', 'ypix', 'objHeight',
+                                      'fieldPos', 'imgW', 'imgH'])
+            img_info_data = img_info._make([bm_wd, bm_ht, obj_ht, fld_pos, img_wd, img_ht])
+        elif data=='psf':
+            img_info = _co.namedtuple('PSFGridInfo', ['xpix', 'ypix', 'objHeight',
+                                      'fieldPos'])
+            img_info_data = img_info._make([bm_wd, bm_ht, obj_ht, fld_pos])
+        else: # source bitmap / data = src
+            img_info = _co.namedtuple('SrcImgInfo', ['xpix', 'ypix'])
+            img_info_data = img_info._make([bm_wd, bm_ht])
+        
         img_data = [[[0 for c in range(3)] for i in range(bm_wd)] for j in range(bm_ht)]
         r, g, b = 0, 1, 2
         pat = r'xpix\s{1,4}ypix\s{1,4}R\s{1,4}G\s{1,4}B'
@@ -8601,9 +9045,57 @@ class PyZDDE(object):
         ----------
         settingsFile : string
             filename of the settings file including path and extension
-        others :
-            see the parameter definitions of
-            ``zSetImageSimulationSettings()``
+        image : string, optional
+            The input file name. This should be specified without a path.
+        height : float, optional
+            The field height, which defines the full height of the source
+            bitmap in field coordinates, may be either lens units or
+            degrees, depending upon the current field definition (heights
+            or angles, respectively).
+        over : integer, optional, [0-6]
+            Oversample value. Use 0 for None, 1 for 2X, 2 for 4x, etc.
+        guard : integer, optional, [0-6]
+            Guard band value. Use 0 for None, 1 for 2X, 2 for 4x, etc.
+        flip : integer, optional, [0-3]
+            Flip Source. Use 0 for None, 1 for top-bottom, 2 for left-right, 
+            3 for top-bottom & left-right.
+        rotate : integer, optional, [0-3]
+            Rotate Source. Use 0 for none, 1 for 90, 2 for 180, 3 for 270.
+        wave : integer, optional, 
+            Wavelength. Use 0 for RGB, 1 for 1+2+3, 2 for wave #1, 3 for
+            wave #2, etc.
+        field : integer, optional
+            Field number.
+        pupilSample : integer, optional, [1-10]
+            Pupil Sampling. Use 1 for 32x32, 2 for 64x64, etc.
+        imgSample : integer, optional, [1-5]
+            Image Sampling. Use 1 for 32x32, 2 for 64x64, etc.
+        psfx, psfy : integer, optional, [1-51]
+            The number of PSF grid points.
+        aberr : integer, optional, [0-2]
+            Use 0 for none, 1 for geometric, 2 for diffraction.
+        pol : integer, optional, [0-1]
+            Polarization. Use 0 for no, 1 for yes.
+        fixedAper : integer, optional, [0-1]
+            Apply fixed aperture? Use 0 for no, 1 for yes (apply fixed
+            aperture).
+        illum : integer, optional, [0-1]
+            Relative illumination. Use 0 for no, 1 for yes.
+        showAs : integer, optional, [0-2]
+            Use 0 for Simulated Image, 1 for Source Bitmap, and 2 for PSF
+            Grid.
+        reference : integer, optional, [0-2]
+            Use 0 for chief ray, 1 for vertex, 2 for primary chief ray.
+        suppress : integer, optional, [0-1]
+            Use 0 for no, 1 for yes.
+        pixelSize : integer, optional
+            Use 0 for default or the size in lens units.
+        xpix, ypix : integer, optional
+            Use 0 for default or the number of pixels.
+        flipSimImg : integer, optional
+            Use 0 for none, 1 for top-bottom, etc.
+        outFile : string, optional
+            The output file name or empty string for no output file.
 
         Returns
         -------
@@ -8708,40 +9200,43 @@ class PyZDDE(object):
             bitmap in field coordinates, may be either lens units or
             degrees, depending upon the current field definition (heights
             or angles, respectively).
-        over : integer, optional
-            Oversample value. Use 0 for none, 1 for 2X, 2 for 4x, etc.
-        guard : integer, optional
-            Guard band value. Use 0 for none, 1 for 2X, 2 for 4x, etc.
-        flip : integer, optional
-            Flip Source. Use 0 for none, 1 for TB, 2 for LR, 3 for TB&LR.
-        rotate : integer, optional
+        over : integer, optional, [0-6]
+            Oversample value. Use 0 for None, 1 for 2X, 2 for 4x, etc.
+        guard : integer, optional, [0-6]
+            Guard band value. Use 0 for None, 1 for 2X, 2 for 4x, etc.
+        flip : integer, optional, [0-3]
+            Flip Source. Use 0 for None, 1 for top-bottom, 2 for left-right, 
+            3 for top-bottom & left-right.
+        rotate : integer, optional, [0-3]
             Rotate Source. Use 0 for none, 1 for 90, 2 for 180, 3 for 270.
-        wave : integer, optional
+        wave : integer, optional, 
             Wavelength. Use 0 for RGB, 1 for 1+2+3, 2 for wave #1, 3 for
             wave #2, etc.
         field : integer, optional
             Field number.
-        pupilSample : integer, optional
+        pupilSample : integer, optional, [1-10]
             Pupil Sampling. Use 1 for 32x32, 2 for 64x64, etc.
-        imgSample : integer, optional
+            i.e. [32*(2**i) for i in range(10)]
+        imgSample : integer, optional, [1-5]
             Image Sampling. Use 1 for 32x32, 2 for 64x64, etc.
-        psfx, psfy : integer, optional
+            i.e. [32*(2**i) for i in range(5)]
+        psfx, psfy : integer, optional, [1-51]
             The number of PSF grid points.
-        aberr : integer, optional
+        aberr : integer, optional, [0-2]
             Use 0 for none, 1 for geometric, 2 for diffraction.
-        pol : integer, optional
+        pol : integer, optional, [0-1]
             Polarization. Use 0 for no, 1 for yes.
-        fixedAper : integer, optional
+        fixedAper : integer, optional, [0-1]
             Apply fixed aperture? Use 0 for no, 1 for yes (apply fixed
             aperture).
-        illum : integer, optional
+        illum : integer, optional, [0-1]
             Relative illumination. Use 0 for no, 1 for yes.
-        showAs : integer, optional
+        showAs : integer, optional, [0-2]
             Use 0 for Simulated Image, 1 for Source Bitmap, and 2 for PSF
             Grid.
-        reference : integer, optional
+        reference : integer, optional, [0-2]
             Use 0 for chief ray, 1 for vertex, 2 for primary chief ray.
-        suppress : integer, optional
+        suppress : integer, optional, [0-1]
             Use 0 for no, 1 for yes.
         pixelSize : integer, optional
             Use 0 for default or the size in lens units.
@@ -8796,7 +9291,7 @@ class PyZDDE(object):
                                                 flipSimImg, outFile)
             return dst
 
-# NSC detector viewer data
+    # NSC detector viewer data
     def zGetDetectorViewer(self, settingsFile=None, displayData=False, txtFile=None,
                            keepFile=False, timeout=60):
         """Returns NSC detector viewer data. 
@@ -8922,8 +9417,36 @@ class PyZDDE(object):
         ----------
         settingsFile : string
             filename of the settings file including path and extension
-        others :
-            see the parameter definitions of ``zSetDetectorViewerSettings()``
+        surfNum : integer, optional
+            the surface number. Use 1 for Non-Sequential mode
+        detectNum : integer, optional
+            the detector number
+        showAs : integer, optional
+            0 = full pixel data; 1 = cross section row; 2 = cross 
+            section column. For Graphics Windows see Notes below. 
+        rowcolNum: integer, optional
+            the row or column number for cross section plots
+        zPlaneNum : integer, optional
+            the Z-Plane number for detector volumes
+        scale : integer, optional 
+            the scale mode. Use 0 for linear, 1 for Log -5, 2 for Log -10, and
+            3 for Log - 15.
+        smooth : integer, optional 
+            the smoothing value 
+        dType : integer, optional 
+            use 0 for incoherent irradiance, 1 for coherent irradiance, 2 for
+            coherent phase, 3 for radiant intensity, 4 for radiance (position 
+            space), and 5 for radiance (angle space).
+        zrd : string, optional 
+            the ray data base name, or null for none.
+        dfilter : string, optional 
+            the filter string  
+        maxPltScale : float, optional 
+            the maximum plot scale 
+        minPltScale : float, optional 
+            the minimim plot scale 
+        outFileName : string, optional
+            the output file name 
 
         Returns
         -------
@@ -9065,7 +9588,7 @@ class PyZDDE(object):
             return dst        
 
 
-# Aberration coefficients analysis functions
+    # Aberration coefficients analysis functions
     def zGetSeidelAberration(self, which='wave', txtFile=None, keepFile=False):
         """Return the Seidel Aberration coefficients
 
@@ -9274,11 +9797,11 @@ class PyZDDE(object):
             _deleteFile(textFileName)
         return zInfo, zCoeff
 
-# -------------------
-# Tools functions
-# -------------------
-
-# System modification functions
+    # -------------------
+    # Tools functions
+    # -------------------
+    
+    # System modification functions
     def zLensScale(self, factor=2.0, ignoreSurfaces=None):
         """Scale the lens design by factor specified.
 
@@ -9508,7 +10031,7 @@ class PyZDDE(object):
                                                  tuple(fieldDataTupleScaled))
         return ret
 
-# Design functions
+    # Design functions
     def zOptimize2(self, numCycle=1, algo=0, histLen=5, precision=1e-12,
                    minMF=1e-15, tMinCycles=5, tMaxCycles=None, timeout=None):
         """A wrapper around zOptimize() providing few control features
@@ -9584,7 +10107,7 @@ class PyZDDE(object):
             tCycles = count*numCycle
         return (finalMerit, tCycles)
 
-# Other functions
+    # Other functions
     def zExecuteZPLMacro(self, zplMacroCode, timeout=None):
         """Executes a ZPL macro present in the <data>/Macros folder.
 
@@ -9696,6 +10219,10 @@ class PyZDDE(object):
         ----------
         .. [UPRT] Understanding Paraxial Ray-Tracing, Mark Nicholson, Zemax
                   Knowledgebase, July 21, 2005.
+
+        See Also
+        -------- 
+        pyz.numAper2fnum()
         """
         prim_wave_num = self.zGetPrimaryWave()
         last_surf = self.zGetNumSurf()
@@ -9821,6 +10348,8 @@ class PyZDDE(object):
         """Return the pupil magnification, which is the ratio of the
         exit-pupil diameter to the entrance pupil diameter.
 
+        The pupils are paraxial pupils. 
+
         Parameters
         ----------
         None
@@ -9914,15 +10443,233 @@ class PyZDDE(object):
         opd = self.zOperandValue(code, 0, wave, hx, hy, px, py)
         return opd
 
+    def zGetSemiDiameter(self, surfNum):
+        """Get the Semi-Diameter value of the surface with number `surfNum`
 
-    def zTiltDecenterElements(self, firstSurf, lastSurf, xdec=0.0, ydec=0.0, xtilt=0.0, 
-                              ytilt=0.0, ztilt=0.0, order=0, cb2Ord=None, cbComment1=None, 
-                              cbComment2=None, suppressMsgBox=False):
-        '''tilt decenter elements using CBs around the `firstSurf` and `lastSurf`. 
+        Parameters
+        ---------- 
+        surfNum : integer 
+            surface number 
+
+        Returns
+        ------- 
+        semidia : real 
+            semi-diameter of the surface 
+        """
+        return self.zGetSurfaceData(surfNum=surfNum, code=self.SDAT_SEMIDIA)
+
+    def zSetSemiDiameter(self, surfNum, value=0):
+        """Set the Semi-Diameter of the surface with number `surfNum`.  
         
-        Please check the options "Skip Rays To This Surface" and "Do Not Draw 
-        This Surface" under the "Draw" tab of the "Surface Properties" of the 
-        dummy surface manually. 
+        A "fixed" solve type is set on the semi-diameter of the surface.
+    
+        Parameters
+        ---------- 
+        surfNum : integer
+            surface number
+        value : real, optional
+            value of the semi-diameter to set
+    
+        Returns
+        ------- 
+        semidia : real
+            value of the semi-diameter of the surface after setting it.
+        """
+        self.zSetSolve(surfNum, self.SOLVE_SPAR_SEMIDIA, self.SOLVE_SEMIDIA_FIXED)
+        return self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_SEMIDIA, value=value)
+
+    def zGetThickness(self, surfNum):
+        """Get the Thickness value of the surface with number `surfNum`
+
+        Parameters
+        ---------- 
+        surfNum : integer 
+            surface number 
+
+        Returns
+        ------- 
+        thick : real 
+            thickness of the surface 
+        """
+        return self.zGetSurfaceData(surfNum=surfNum, code=self.SDAT_THICK)
+
+    def zSetThickness(self, surfNum, value=0):
+        """Set the thickness of the surface with number `surfNum`.
+
+        Parameters
+        ---------- 
+        surfNum: integer
+            surface number 
+        value : real, optional
+            value of the thickness to set 
+
+        Returns
+        ------- 
+        thick : real 
+            value of the thickness of the surface after setting it.
+        """
+        return self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_THICK, value=value)
+
+    def zGetRadius(self, surfNum):
+        """Get the radius of the surface with number `surfNum`.
+
+        Parameters
+        ---------- 
+        surfNum : integer 
+            surface number 
+
+        Returns
+        ------- 
+        radius : real 
+            radius of the surface 
+        """
+        value = self.zGetSurfaceData(surfNum=surfNum, code=self.SDAT_CURV)
+        radius = 1.0/value if value else 1E10
+        return radius
+
+    def zSetRadius(self, surfNum, value=1E10):
+        """Set the radius of the surface with number `surfNum`.
+
+        Parameters
+        ---------- 
+        surfNum : integer 
+            surface number
+        value : real 
+            radius of the surface  
+
+        Returns
+        ------- 
+        radius : real 
+            radius of the surface 
+        """
+        curv = 1.0/value if value else 1E10
+        ret = self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_CURV, value=curv)
+        return 1.0/ret if ret else 1E10  
+
+    def zSetGlass(self, surfNum, value=''):
+        """Set the glass of the surface with number `surfNum`
+
+        Parameters
+        ---------- 
+        surfNum : integer 
+            surface number 
+        value : string 
+            valid glass string code 
+
+        Returns
+        ------- 
+        glass : string 
+            glass for the surface 
+        """
+        return self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_GLASS, value=value)
+
+    def zGetConic(self, surfNum):
+        """Get the conic value of the surface with number `surfNum`
+
+        Parameters
+        ---------- 
+        surfNum : integer 
+            surface number 
+
+        Returns
+        ------- 
+        conic : real 
+            conic of the surface
+        """
+        return self.zGetSurfaceData(surfNum=surfNum, code=self.SDAT_CONIC)
+
+    def zSetConic(self, surfNum, value=0):
+        """Set the conic value of the surface with number `surfNum`
+
+        Parameters
+        ---------- 
+        surfNum : integer 
+            surface number 
+        value : real 
+            conic value
+
+        Returns
+        ------- 
+        conic : real 
+            conic of the surface
+        """
+        return self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_CONIC, value=value)
+        
+    def zInsertDummySurface(self, surfNum, comment='dummy', thick=None, semidia=None):
+        """Insert dummy surface at surface number indicated by `surfNum` 
+    
+        Parameters
+        ---------- 
+        surfNum : integer
+            surface number at which to insert the dummy surface 
+        comment : string, optional, default is 'dummy'
+            comment on the surface 
+        thick : real, optional
+            thickness of the surface 
+        semidia : real, optional 
+            semi diameter of the surface 
+            
+        Returns
+        -------
+        nsur : integer
+            total number of surfaces in the LDE including the new dummy surface.
+        """
+        self.zInsertSurface(surfNum)
+        self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_COMMENT, value=comment)
+        if thick is not None:
+            self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_THICK, value=thick)
+        if semidia is not None:
+            self.zSetSemiDiameter(surfNum=surfNum, value=semidia)
+        return self.zGetNumSurf()
+        
+    def zInsertCoordinateBreak(self, surfNum, xdec=0.0, ydec=0.0, xtilt=0.0, ytilt=0.0,
+                               ztilt=0.0, order=0, thick=None, comment=None):
+        """Insert Coordinate Break at the surface position indicated by `surfNum`
+        
+        Parameters
+        ----------
+        surfNum : integer
+            surface number at which to insert the coordinate break 
+        xdec : float, optional, default = 0.0
+            decenter x (in lens units)
+        ydec : float, optional, default = 0.0
+            decenter y (in lens units)
+        xtilt : float, optional, default = 0.0
+            tilt about x (degrees)
+        ytilt : float, optional, default = 0.0
+            tilt about y (degrees)
+        ztilt : float, optional, default = 0.0
+            tilt about z (degrees)
+        order : integer (0/1), optional, default = 0
+            0 = decenter then tilt; 1 = tilt then decenter
+        thick : real, optional
+            set the thickness of the cb surface 
+        comment : string, optional 
+            surface comment 
+
+        Returns
+        ------- 
+        ret : integer
+            0 if no error   
+        """
+        self.zInsertSurface(surfNum=surfNum) 
+        self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_TYPE, value='COORDBRK')
+        # set the decenter and tilt values and order 
+        params = range(1, 7)
+        values = [xdec, ydec, xtilt, ytilt, ztilt, order]
+        for par, val in zip(params, values):
+            self.zSetSurfaceParameter(surfNum=surfNum, param=par, value=val)
+        if thick is not None:
+            self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_THICK, value=thick)
+        if comment is not None:
+             self.zSetSurfaceData(surfNum=surfNum, code=self.SDAT_COMMENT, value=comment)
+        return 0
+        
+        
+    def zTiltDecenterElements(self, firstSurf, lastSurf, xdec=0.0, ydec=0.0, xtilt=0.0, 
+                              ytilt=0.0, ztilt=0.0, order=0, cbComment1=None, 
+                              cbComment2=None, dummySemiDiaToZero=False):
+        '''Tilt decenter elements using CBs around the `firstSurf` and `lastSurf`. 
         
         Parameters
         ----------
@@ -9940,21 +10687,15 @@ class PyZDDE(object):
             tilt about y (degrees)
         ztilt : float
             tilt about z (degrees)
-        order : integer (0/1), optional
-            0 (default) = decenter then tilt; 1 = tilt then decenter
-        cb2Ord : None or integer (0/1), optional
-            order flag on second cb surface. If 1, second CB is executed 
-            in reverse order. This is required if more than one tilt is 
-            used. (It is a good practice). If `order` is 1 and `cb2Ord` 
-            is `None`, then `cb2Ord` is set to 0 (Zemax behavior)
-        comment1 : string, optional
+        order : integer (0/1), optional, default = 0
+            0 = decenter then tilt; 1 = tilt then decenter
+        comment1 : string, optional, default = 'Element Tilt'
             comment on the first CB surface
-        comment2 : string, optional
-            comment on the second CB surface
-        suppressMsgBox : bool, optional
-            if `False`, the message box that is used to remind users
-            to apply the manual settings to the dummy surface (e.g.
-            to skip rays) is suppressed. Default is `True`.
+        comment2 : string, optional, default = 'Element Tilt:return'
+            comment on the second CB surface. 
+        dummySemiDiaToZero : bool, optional, default = False
+            if `True` the semi-diameter of the dummy surface (afer CB2) is 
+            set to zero.
         
         Returns
         -------
@@ -9964,17 +10705,13 @@ class PyZDDE(object):
             surface number of the second (for restoring axis) coordinate 
             break surface
         dummy : integer
-            surface number of the dummy surface. It is always `cb2` + 1
+            surface number of the dummy surface. It is always `CB2` + 1
         
         Notes
         -----
         1. In total, 3 more surfaces are added to the existing system -- the 
            first CB, before `firstSurf`, the second CB after `lastSurf`, and 
            a dummy surface after the second CB. 
-        2. The "Skip Rays To This Surface" and "Do Not Draw This Surface" under 
-           the "Draw" tab of the "Surface Properties" of the dummy surface MUST 
-           be checked manually after the execution of this function. 
-           Unfortunately there is no way to do it automatically. 
         '''
         numSurfBetweenCBs = lastSurf - firstSurf + 1
         cb1 = firstSurf
@@ -9994,13 +10731,23 @@ class PyZDDE(object):
         self.zSetSurfaceData(surfNum=cb2, code=self.SDAT_COMMENT, value=cbComment2)
         self.zSetSurfaceData(surfNum=cb2, code=self.SDAT_TYPE, value='COORDBRK')
         self.zSetSurfaceData(surfNum=dummy, code=self.SDAT_COMMENT, value='Dummy')
-        # transfer thickness and solve on thickness (if any) of the surface just before
-        # the cb2 (originally lastSurf) to the dummy surface
+        if dummySemiDiaToZero:
+            self.zSetSemiDiameter(surfNum=dummy, value=0)
+        # transfer thickness of the surface just before the cb2 (originally 
+        # lastSurf) to the dummy surface
         lastSurf += 1  # last surface number incremented by 1 bcoz of cb 1
         self.zSetSurfaceData(surfNum=lastSurf, code=self.SDAT_THICK, value=0.0)
         self.zSetSolve(lastSurf, self.SOLVE_SPAR_THICK, self.SOLVE_THICK_FIXED)
         self.zSetSurfaceData(surfNum=dummy, code=self.SDAT_THICK, value=thick)
-        self.zSetSolve(dummy, self.SOLVE_SPAR_THICK, *solve)
+        # transfer the solve on the thickness (if any) of the surface just before
+        # the cb2 (originally lastSurf) to the dummy surface. The param1 of 
+        # solve type "Thickness" may need to be modified before transferring.
+        if solve[0] in {5, 7, 8, 9}: # param1 is a integer surface number
+            param1 = int(solve[1]) if solve[1] < cb1 else int(solve[1]) + 1
+        else: # param1 is a floating value, or macro name
+            param1 = solve[1]
+        self.zSetSolve(dummy, self.SOLVE_SPAR_THICK, solve[0], param1, solve[2], 
+                       solve[3], solve[4])
         # use pick-up solve on glass surface of dummy to pickup from lastSurf
         self.zSetSolve(dummy, self.SOLVE_SPAR_GLASS, self.SOLVE_GLASS_PICKUP, lastSurf)
         # use pick-up solves on second CB; set scale factor of -1 to lock the second
@@ -10016,11 +10763,13 @@ class PyZDDE(object):
         self.zSetSolve(lastSurf, self.SOLVE_SPAR_THICK, self.SOLVE_THICK_POS, cb1 , 0)
         # use a pickup solve to restore position at the back of the lastSurf
         self.zSetSolve(cb2, self.SOLVE_SPAR_THICK, self.SOLVE_THICK_PICKUP, 
-                       lastSurf, scale, offset, 2)
-        # set order flag on first cb
-        self.zSetSurfaceParameter(surfNum=cb1, param=6, value=order)    
-        # set order flag on second cb
-        cb2Ord = (cb2Ord if cb2Ord else 0) if order else 1
+                       lastSurf, scale, offset, 0)
+        # set the appropriate orders on the surfaces
+        if order: # Tilt and then decenter
+            cb1Ord, cb2Ord = 1, 0
+        else: # Decenter and then tilt (default)
+            cb1Ord, cb2Ord = 0, 1
+        self.zSetSurfaceParameter(surfNum=cb1, param=6, value=cb1Ord)    
         self.zSetSurfaceParameter(surfNum=cb2, param=6, value=cb2Ord)
         # set the decenter and tilt values in the first cb
         params = range(1, 6)
@@ -10028,16 +10777,6 @@ class PyZDDE(object):
         for par, val in zip(params, values):
             self.zSetSurfaceParameter(surfNum=cb1, param=par, value=val)
         self.zGetUpdate()
-        if not suppressMsgBox:
-            msg = ('Recommended task: \n'
-                   '1. Please use zPushLens(1) to push lens to the LDE. \n' 
-                   '2. Use the "Draw" tab under "Surface Properties" of the \n'
-                   '  "Dummy" surface (number {}) and check "Skip Rays To \n'
-                   '  This Surface" and "Do Not Draw This Surface", and\n'
-                   '3. Use zGetRefresh() to move lens to the DDE server.'
-                   .format(dummy))
-            title = 'Tilt and Decenter Elements'
-            showMessageBox(msg=msg, title=title, msgtype='info')
         return cb1, cb2, dummy
 
     def zInsertNSCSourceEllipse(self, surfNum=1, objNum=1, x=0.0, y=0.0, z=0.0, 
@@ -10409,8 +11148,24 @@ class PyZDDE(object):
             assert self.zSetNSCParameter(surfNum, objNum, paramNum=i, data=each) == each, \
             'Error in setting NSC parameter {} to {} at object {}'.format(i, param[i], objNum) 
     
+    #%% Interaction friendly (but duplicate) functions
+    @property
+    def refresh(self):
+        """push lens from LDE to DDE server"""
+        return self.zGetRefresh()
 
-    #%%  IPYTHON NOTEBOOK UTILITY FUNCTIONS
+    @property
+    def push(self):
+        """push lens from DDE server to LDE and update lens"""
+        return self.zPushLens(1) 
+
+    @property
+    def update(self):
+        """update -- recompute all pupil positions, slovles, etc."""
+        return self.zGetUpdate()
+    
+
+    #%% IPYTHON NOTEBOOK UTILITY FUNCTIONS
 
     def ipzCaptureWindowLQ(self, num=1, *args, **kwargs):
         """Capture graphic window from Zemax and display in IPython
@@ -10459,19 +11214,6 @@ class PyZDDE(object):
                     print("Use zSetMacroPath() to set the correct macro path.")
         else:
             print("Couldn't import IPython modules.")
-
-    def ipzCaptureWindow2(self, *args, **kwargs):
-        """Capture any analysis window from Zemax main window, using
-        3-letter analysis code. Same as ``ipzCaptureWindow()``.
-
-        Notes
-        -----
-        This function is now present only for backward compatibility.
-        """
-        _warnings.warn('Method ipzCaptureWindow2() has been replaced by ipzCaptureWindow(). '
-                       'Please update code and use ipzCaptureWindow(). This method '
-                       'will be removed from the zdde module in future')
-        return self.ipzCaptureWindow(*args, **kwargs)
 
     def ipzCaptureWindow(self, analysisType, percent=12, MFFtNum=0, gamma=0.35,
                          settingsFile=None, flag=0, retArr=False, wait=10):
@@ -10535,6 +11277,8 @@ class PyZDDE(object):
            executing this command by setting the debug print level to
            1 as ``pyz._DEBUG_PRINT_LEVEL=1``, and running the function
            again.
+        4. The dataitem `GetMetaFile` has been removed since OpticStudio
+           14. Therefore, this function does not work in OpticStudio. 
 
         References
         ----------
@@ -10606,7 +11350,9 @@ class PyZDDE(object):
                     else:
                         print("Timeout reached before PNG file was ready")
                 else:
-                    print("Timeout reached before Metafile file was ready")
+                    print(("Timeout reached before Metafile file was ready. "
+                           "This function doesn't work in newer OpticStudio. "
+                           "Please consider using ipzCaptureWindowLQ()."))
             else:
                 print("Metafile couldn't be created.")
         else:
@@ -10723,20 +11469,30 @@ class PyZDDE(object):
         """
         if pprint:
             print("Multi-Function Editor contents:")
-            print('{:^8}{:>12}{:>12}{:>14}'
-                  .format("Oper", "Target", "Weight", "Value"))
+            print('{:^8}{:>6}{:>6}{:>8}{:>8}{:>8}{:>8}{:>8}{:>10}{:>8}{:>10}'
+                  .format("Oper", "int1", "int2", "data1", "data2", "data3", "data4", 
+                          "data5", "Target", "Weight", "Value"))
         else:
-            mfed = _co.namedtuple('MFEdata', ['Oper', 'Target',
+            mfed = _co.namedtuple('MFEdata', ['Oper', 'int1', 'int2', 'data1', 'data2', 
+                                              'data3', 'data4', 'data5', 'Target',
                                               'Weight', 'Value'])
             mfeData = []
         for i in range(start_row, end_row + 1):
-            opr, tgt = self.zGetOperand(i, 1), self.zGetOperand(i, 8)
-            wgt, val = self.zGetOperand(i, 9), self.zGetOperand(i, 10)
+            #opr, tgt = self.zGetOperand(i, 1), self.zGetOperand(i, 8)
+            #wgt, val = self.zGetOperand(i, 9), self.zGetOperand(i, 10)
+            
+            odata = self.zGetOperandRow(row=i)
+            opr, i1, i2, d1, d2, d3, d4, d5, d6, tgt, wgt, val, per = odata   
+
             if pprint:
-                print('{:^8}{:>12.4f}{:>12.4f}{:>14.6f}'
-                      .format(opr, tgt, wgt, val))
+                if isinstance(i1, str):
+                    print('{:^8}{}'
+                          .format(opr, i1, tgt, wgt, val))
+                else:
+                    print('{:^8}{:>6.2f}{:>6.2f}{:>8.4f}{:>8.4f}{:>8.4f}{:>8.4f}{:>8.4f}{:>10.6f}{:>8.4f}{:>10.6f}'
+                          .format(opr, i1, i2, d1, d2, d3, d4, d5, tgt, wgt, val))
             else:
-                data = mfed._make([opr, tgt, wgt, val])
+                data = mfed._make([opr, i1, i2, d1, d2, d3, d4, d5, tgt, wgt, val])
                 mfeData.append(data)
         if not pprint:
             return tuple(mfeData)
@@ -10764,9 +11520,9 @@ class PyZDDE(object):
         else:
             pupil['Value (system aperture)'] = pupilData[1]
         pupil['Entrance pupil diameter'] = pupilData[2]
-        pupil['Entrance pupil position'] = pupilData[3]
+        pupil['Entrance pupil position (from surface 1)'] = pupilData[3]
         pupil['Exit pupil diameter'] = pupilData[4]
-        pupil['Exit pupil position'] = pupilData[5]
+        pupil['Exit pupil position (from IMA)'] = pupilData[5]
         pupil['Apodization type'] = apo_type[pupilData[6]]
         pupil['Apodization factor'] = pupilData[7]
         if pprint:
@@ -10831,14 +11587,16 @@ class PyZDDE(object):
         else:
             return surfdata
 
-    def ipzGetLDE(self):
+    def ipzGetLDE(self, num=None):
         """Prints the sequential mode LDE data into the IPython cell
 
         Usage: ``ipzGetLDE()``
 
         Parameters
         ----------
-        None
+        num : integer, optional 
+            if not None, sufaces upto surface number equal to `num` 
+            will be retrieved
 
         Returns
         -------
@@ -10854,11 +11612,12 @@ class PyZDDE(object):
         assert ret == 0
         recSystemData = self.zGetSystem() # Get the current system parameters
         numSurf = recSystemData[0]
+        numSurf2show = num if num is not None else numSurf 
         line_list = _readLinesFromFile(_openFile(textFileName))
         for line_num, line in enumerate(line_list):
             sectionString = ("SURFACE DATA SUMMARY:") # to use re later
             if line.rstrip()== sectionString:
-                for i in range(numSurf + 4): # 1 object surf + 3 extra lines before actual data
+                for i in range(numSurf2show + 4): # 1 object surf + 3 extra lines before actual data
                     lde_line = line_list[line_num + i].rstrip()
                     print(lde_line)
                 break
@@ -10870,6 +11629,29 @@ class PyZDDE(object):
         _deleteFile(textFileName)
 
 
+    def ipzGetFieldData(self):
+        """Prints formatted field data in IPython QtConsole or Notebook  
+        """
+        fieldType = {0 : 'Angles in degrees', 
+                     1 : 'Object height', 
+                     2 : 'Paraxial image height', 
+                     3 : 'Real image height'}
+        fieldNormalization = {0 : 'Radial', 1 : 'Rectangular'}
+        fieldMetaData = self.zGetField(0)
+        fieldMeta = {}
+        fieldMeta['Type'] = fieldType[fieldMetaData.type]
+        fieldMeta['Number of Fields'] = fieldMetaData.numFields
+        fieldMeta['Max X'] = fieldMetaData.maxX
+        fieldMeta['Max Y'] = fieldMetaData.maxY
+        fieldMeta['Field Normalization'] = fieldNormalization[fieldMetaData.normMethod]
+        _print_dict(fieldMeta)
+        print(("{:^8}{:^8}{:^8}{:^8}{:^8}{:^8}{:^8}{:^8}"
+               .format('X', 'Y', 'Weight', 'VDX', 'VDY', 'VCX', 'VCY', 'VAN')))
+        for each in self.zGetFieldTuple():
+            print(("{:< 8.2f}{:< 8.2f}{:<8.4f}{:<8.4f}{:<8.4f}"
+                   "{:<8.4f}{:<8.4f}{:<8.4f}"
+                   .format(each.xf, each.yf, each.wgt, each.vdx, each.vdy, 
+                           each.vcx, each.vcy, each.van)))
 
 #%% OTHER MODULE HELPER FUNCTIONS THAT DO NOT REQUIRE A RUNNING ZEMAX SESSION
 
@@ -10965,6 +11747,31 @@ def fresnelNumber(r, z, wl=550e-6, approx=False):
         return (r**2)/(wl*z)
     else:
         return 2.0*(_math.sqrt(z**2 + r**2) - z)/wl
+
+def approx_equal(x, y, tol=macheps):
+    """compare two float values using relative difference as measure
+    
+    Parameters
+    ----------
+    x, y : floats
+        floating point values to be compared
+    tol : float
+        tolerance (default=`macheps`, which is the difference between 1 and the next 
+        representable float. `macheps` is equal to 2^{−23} ≃ 1.19e-07 for 32 bit 
+        representation and equal to 2^{−52} ≃ 2.22e-16 for 64 bit representation)
+    
+    Returns
+    -------
+    rel_diff : bool
+        ``True`` if ``x`` and ``y`` are approximately equal within the tol   
+    
+    Notes
+    -----
+    1. relative difference: http://en.wikipedia.org/wiki/Relative_change_and_difference
+    3. In future, this function could be replaced by a standard library function. See
+       PEP0485 for details. https://www.python.org/dev/peps/pep-0485/
+    """
+    return abs(x - y) <= max(abs(x), abs(y)) * tol
 
 # scales to SI-meter
 #                    mm  , cm  , inch  , m
@@ -11247,8 +12054,9 @@ def _process_get_set_Operand(column, reply):
             return str(rs)
         else:
             return -1
-    elif column in (2,3):
-        return int(float(rs))
+    elif column in (2,3): # if thre is a comment, it will be in column 2
+        #return int(float(rs))
+        return _regressLiteralType(rs)
     else:
         return float(rs)
 
@@ -11573,6 +12381,7 @@ def _txtAndSettingsToUse(self, txtFile, settingsFile, anaType):
             cfgFile = ''
             getTextFlag = 0
     return textFileName, cfgFile, getTextFlag
+
 #
 #
 if __name__ == "__main__":
