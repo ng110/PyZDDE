@@ -1480,6 +1480,14 @@ class PyZDDE(object):
             glassInfo = None
         return glassInfo
 
+
+    def zGetGlobalMatrixNG(self, surfNum):
+        cmd = "GetGlobalMatrix,{:d}".format(surfNum)
+        reply = self._sendDDEcommand(cmd)
+        return reply
+
+
+
     def zGetGlobalMatrix(self, surfNum):
         """Returns the the matrix required to convert any local coordinates
         (such as from a ray trace) into global coordinates.
