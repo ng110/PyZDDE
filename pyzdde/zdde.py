@@ -616,7 +616,17 @@ class PyZDDE(object):
     def apr(self, val):
         self._apr = val
 
-    
+    @property
+    def connection(self):
+        """Checks status of connection
+
+        Returns
+        -------
+        status: bool
+            True = connection online
+            False = connection offline
+        """
+        return self._connection
 
     # ZEMAX <--> PyZDDE client connection methods
     #--------------------------------------------
@@ -3188,7 +3198,7 @@ class PyZDDE(object):
              64   - Convert thin film phase to ray equivalent (0:no, 1:yes)
              65   - Unpolarized. (0:no, 1:yes)
              66   - Method. (0:X-axis, 1:Y-axis, 2:Z-axis)
-             70   - Ray Aiming. (0:off, 1:on, 2:aberrated)
+             70   - Ray Aiming. (0:off, 1:on (paraxial), 2:aberrated (real))
              71   - Ray aiming pupil shift x.
              72   - Ray aiming pupil shift y.
              73   - Ray aiming pupil shift z.
@@ -5082,25 +5092,39 @@ class PyZDDE(object):
         zGetField()
         """
         if n:
-            fd = _co.namedtuple('fieldData', ['xf', 'yf', 'wgt',
-                                              'vdx', 'vdy',
-                                              'vcx', 'vcy', 'van'])
             arg3 = 1.0 if arg3 is None else arg3 # default weight
             cmd = ("SetField,{:d},{:1.20g},{:1.20g},{:1.20g},{:1.20g},{:1.20g}"
                    ",{:1.20g},{:1.20g},{:1.20g}"
                    .format(n, arg1, arg2, arg3, vdx, vdy, vcx, vcy, van))
+
+            reply = self._sendDDEcommand(cmd)
+            rs = reply.split(',')
+
+            if len(rs) == 2:  # The behaviour with the Zemax bug
+                fieldData = self.zGetField(n)
+
+            else:  # the expected behaviour, which is also expected to return
+                fd = _co.namedtuple('fieldData', ['xf', 'yf', 'wgt',
+                                                  'vdx', 'vdy',
+                                                  'vcx', 'vcy', 'van'])
+
+                fieldData = fd._make([float(elem) for elem in rs])
+
         else:
-            fd = _co.namedtuple('fieldData', ['type', 'numFields',
-                                              'maxX', 'maxY', 'normMethod'])
-            arg3 = 0 if arg3 is None else arg3 # default normalization
+            arg3 = 0 if arg3 is None else arg3  # default normalization
             cmd = ("SetField,{:d},{:d},{:d},{:d}".format(0, arg1, arg2, arg3))
-        reply = self._sendDDEcommand(cmd)
-        rs = reply.split(',')
-        if n:
-            fieldData = fd._make([float(elem) for elem in rs])
-        else:
-            fieldData = fd._make([int(elem) if (i==0 or i==1 or i==4)
-                                 else float(elem) for i, elem in enumerate(rs)])
+            reply = self._sendDDEcommand(cmd)
+            rs = reply.split(',')
+
+            if len(rs) == 2:  # The behaviour with the Zemax bug
+                fieldData = self.zGetField(n)
+
+            else:  # the expected behaviour, which is also expected to return
+                fd = _co.namedtuple('fieldData', ['type', 'numFields',
+                                                  'maxX', 'maxY', 'normMethod'])
+                fieldData = fd._make([int(elem) if (i == 0 or i == 1 or i == 4)
+                                      else float(elem) for i, elem in enumerate(rs)])
+
         return fieldData
 
     def zSetFloat(self):
@@ -6073,8 +6097,8 @@ class PyZDDE(object):
             if not isinstance(value,str):
                 cmd = cmd+','+str(value)
             else:
-                raise ValueError('Invalid input, expecting float type code')
-        if code > 70:
+                raise ValueError('Invalid input, expecting additional argument')
+        if code in (71, 72, 73, 74, 75, 76):
             if arg2 != None:
                 cmd = cmd+","+str(arg2)
             else:
@@ -9394,6 +9418,10 @@ class PyZDDE(object):
         >>> info, coordinates, values =ln.zGetDetectorViewer(settingsFile, True)
         >>> # following line assumes 2d data 
         >>> info, gridData = zfu.zGetDetectorViewer(settingsFile, True)  
+
+        See Also
+        --------
+        zSetDetectorViewerSettings(), zModifyDetectorViewerSettings()
         """
         settings = _txtAndSettingsToUse(self, txtFile, settingsFile, 'Dvw')
         textFileName, cfgFile, getTextFlag = settings
@@ -9780,8 +9808,13 @@ class PyZDDE(object):
                          "Maximum fit error"]
         meta = []
         for i, pat in enumerate(meta_patterns):
-            meta_line = line_list[_getFirstLineOfInterest(line_list, pat)]
-            meta.append(float(_re.search(r'\d{1,3}\.\d{4,8}', meta_line).group()))
+
+            line_index = _getFirstLineOfInterest(line_list, pat)
+            if line_index is not None:
+                meta_line = line_list[line_index]
+                meta.append(float(_re.search(r'\d{1,3}\.\d{4,8}', meta_line).group()))
+            else:
+                meta.append(_math.nan)
 
         info = _co.namedtuple('zInfo', ['pToVChief', 'pToVCentroid', 'rmsToChief',
                                         'rmsToCentroid', 'variance', 'strehl',
@@ -9791,14 +9824,26 @@ class PyZDDE(object):
         # Extract coefficients
         start_line_pat = "Z\s+1\s+-?\d{1,3}\.\d{4,8}"
         start_line = _getFirstLineOfInterest(line_list, start_line_pat)
-        coeff_pat = _re.compile("-?\d{1,3}\.\d{4,8}")
-        zCoeffs = [0]*(line_list_len - start_line)
+        if start_line is not None:  # Zernikes obtained successfully
+            coeff_pat = _re.compile("-?\d{1,3}\.\d{4,8}")
+            zCoeffs = [0] * (line_list_len - start_line)
 
-        for i, line in enumerate(line_list[start_line:]):
-            zCoeffs[i] = float(_re.findall(coeff_pat, line)[0])
+            for i, line in enumerate(line_list[start_line:]):
+                zCoeffs[i] = float(_re.findall(coeff_pat, line)[0])
 
-        zCoeffId = _co.namedtuple('zCoeff',
-                    ['Z{}'.format(i+1) for i in range(line_list_len - start_line)])
+            zCoeffId = _co.namedtuple('zCoeff', ['Z{}'.format(i + 1) for i in range(line_list_len - start_line)])
+
+        else:  # Zernikes were not obtained
+            # Return maximum amount of zernike coefficients, filled with NaN
+            if which.lower() == 'fringe':
+                maxZern = 37  # maximum for the fringe zernike coefficients
+            else:
+                maxZern = 231  # maximum for standard and annular zernike coefficients
+
+            zCoeffs = [_math.nan] * maxZern
+
+            zCoeffId = _co.namedtuple('zCoeff', ['Z{}'.format(i) for i in range(1, maxZern + 1)])
+
         zCoeff = zCoeffId(*zCoeffs)
 
         if not keepFile:
@@ -11257,7 +11302,7 @@ class PyZDDE(object):
             If ``False`` (default), the image is embedded and no array is
             returned;
             If ``True``, an numpy array is returned that may be plotted
-            using Matpotlib.
+            using Matplotlib.
         wait : integer
             time in sec sent to Zemax for the requested analysis to
             complete and produce a file.
@@ -12155,17 +12200,20 @@ def _getDecodedLineFromFile(fileObj):
         with fenc as f:
             for line in f:
                 decodedLine = line.decode(unicode_type)
+                decodedLine = _zfu.checkDecimalSeparators(decodedLine)
                 yield decodedLine.rstrip()
     else: # ascii
         with fileObj as f:
             for line in f:
                 if _global_pyver3: # ascii and Python 3.x
+                    line = _zfu.checkDecimalSeparators(line)
                     yield line.rstrip()
                 else:      # ascii and Python 2.x
                     try:
                         decodedLine = line.decode('raw-unicode-escape')
                     except:
                         decodedLine = line.decode('ascii', 'replace')
+                    decodedLine = _zfu.checkDecimalSeparators(decodedLine)
                     yield decodedLine.rstrip()
 
 def _readLinesFromFile(fileObj):
