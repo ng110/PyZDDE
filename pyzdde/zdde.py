@@ -1743,15 +1743,18 @@ class PyZDDE(object):
                                          'pickupRow', 'pickupConfig', 'scale',
                                          'offset'])
             rs = reply.split(",")
-
-            if len(rs) < 8:
+            if len(rs) == 6:
+                multiConData = [str(rs[i]) if i==0 else int(rs[i])
+                                                              for i in range(len(rs))]
+                multiConData.extend([1.0, 0.0])
+            elif len(rs) == 8:
+                multiConData = [float(rs[i]) if (i==0 or i==6 or i==7) else int(rs[i])
+                                                              for i in range(len(rs))]
+            else:
                 if (self.zGetConfig() == (1, 1, 1)): # probably nothing set in MCE
                     return None 
                 else:
-                    assert False, "Unexpected reply () from Zemax.".format(reply)
-            else:
-                multiConData = [float(rs[i]) if (i==0 or i==6 or i==7) else int(rs[i])
-                                                              for i in range(len(rs))]
+                    assert False, "Unexpected reply ({}) from Zemax.".format(reply)
         else: # if config == 0
             mcd = _co.namedtuple('MCD', ['operandType', 'num1', 'num2', 'num3'])
             rs = reply.split(",")
@@ -3411,13 +3414,14 @@ class PyZDDE(object):
         zGetPolTraceDirect()
         """
         args1 = "{wN:d},{m:d},{s:d},".format(wN=waveNum,m=mode,s=surf)
-        args2 = "{hx:1.4f},{hy:1.4f},".format(hx=hx,hy=hy)
-        args3 = "{px:1.4f},{py:1.4f}".format(px=px,py=py)
+        args2 = "{hx:1.7f},{hy:1.7f},".format(hx=hx,hy=hy)
+        args3 = "{px:1.7f},{py:1.7f}".format(px=px,py=py)
         cmd = "GetTrace," + args1 + args2 + args3
         reply = self._sendDDEcommand(cmd)
         rs = reply.split(',')
         rayData = [int(elem) if (i==0 or i==1)
-                                  else float(elem) for i,elem in enumerate(rs)]
+                                  else float(elem) if '-1.#IND' not in elem  # elem may have the value '-1.#IND00000000000E+000' which cannot be converted to float
+                                  else 0.0 for i,elem in enumerate(rs)]
         rtd = _co.namedtuple('rayTraceData', ['error', 'vig', 'x', 'y', 'z',
                                               'dcos_l', 'dcos_m', 'dcos_n',
                                               'dnorm_l2', 'dnorm_m2', 'dnorm_n2',
