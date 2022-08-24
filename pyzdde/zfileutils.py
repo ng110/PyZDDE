@@ -311,7 +311,7 @@ def writeZRDFile(rayArray, file_name, file_type):
     --------
     >>> writeZRD(rayArray, 'rays.zrd','uncompressed')
     """
-    if file_type is not 'uncompressed':  # Temporary .... to remove after complete implementation
+    if file_type != 'uncompressed':  # Temporary .... to remove after complete implementation
         raise NotImplementedError('Function cannot write to compressed file format')
     comp_type = 'uncompressed_zrd' if (file_type == 'uncompressed') else 'compressed_zrd'
     zrd_type = 0 if (file_type == 'uncompressed') else 20000

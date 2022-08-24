@@ -89,8 +89,8 @@ if _global_pyver3:
    _izip = zip
    _imap = map
    xrange = range
-   import tkinter as _tk
-   import tkinter.messagebox as _MessageBox
+#   import tkinter as _tk
+#   import tkinter.messagebox as _MessageBox
 else:
     from itertools import izip as _izip, imap as _imap
     import Tkinter as _tk
@@ -1743,15 +1743,18 @@ class PyZDDE(object):
                                          'pickupRow', 'pickupConfig', 'scale',
                                          'offset'])
             rs = reply.split(",")
-
-            if len(rs) < 8:
+            if len(rs) == 6:
+                multiConData = [str(rs[i]) if i==0 else int(rs[i])
+                                                              for i in range(len(rs))]
+                multiConData.extend([1.0, 0.0])
+            elif len(rs) == 8:
+                multiConData = [float(rs[i]) if (i==0 or i==6 or i==7) else int(rs[i])
+                                                              for i in range(len(rs))]
+            else:
                 if (self.zGetConfig() == (1, 1, 1)): # probably nothing set in MCE
                     return None 
                 else:
-                    assert False, "Unexpected reply () from Zemax.".format(reply)
-            else:
-                multiConData = [float(rs[i]) if (i==0 or i==6 or i==7) else int(rs[i])
-                                                              for i in range(len(rs))]
+                    assert False, "Unexpected reply ({}) from Zemax.".format(reply)
         else: # if config == 0
             mcd = _co.namedtuple('MCD', ['operandType', 'num1', 'num2', 'num3'])
             rs = reply.split(",")
@@ -2541,10 +2544,10 @@ class PyZDDE(object):
         zGetPolTraceDirect(), zGetTrace(), zGetTraceDirect()
         """
         args1 = "{wN:d},{m:d},{s:d},".format(wN=waveNum,m=mode,s=surf)
-        args2 = "{hx:1.4f},{hy:1.4f},".format(hx=hx,hy=hy)
-        args3 = "{px:1.4f},{py:1.4f},".format(px=px,py=py)
-        args4 = "{Ex:1.4f},{Ey:1.4f},".format(Ex=Ex,Ey=Ey)
-        args5 = "{Phax:1.4f},{Phay:1.4f}".format(Phax=Phax,Phay=Phay)
+        args2 = "{hx:1.20f},{hy:1.20f},".format(hx=hx,hy=hy)
+        args3 = "{px:1.20f},{py:1.20f},".format(px=px,py=py)
+        args4 = "{Ex:1.20f},{Ey:1.20f},".format(Ex=Ex,Ey=Ey)
+        args5 = "{Phax:1.20f},{Phay:1.20f}".format(Phax=Phax,Phay=Phay)
         cmd = "GetPolTrace," + args1 + args2 + args3 + args4 + args5
         reply = self._sendDDEcommand(cmd)
         rs = reply.split(',')
@@ -2623,8 +2626,8 @@ class PyZDDE(object):
         args1 = "{sa:d},{sd:d},".format(sa=startSurf,sd=stopSurf)
         args2 = "{x:1.20g},{y:1.20g},{z:1.20g},".format(x=x,y=y,z=z)
         args3 = "{l:1.20g},{m:1.20g},{n:1.20g},".format(l=l,m=m,n=n)
-        args4 = "{Ex:1.4f},{Ey:1.4f},".format(Ex=Ex,Ey=Ey)
-        args5 = "{Phax:1.4f},{Phay:1.4f}".format(Phax=Phax,Phay=Phay)
+        args4 = "{Ex:1.20f},{Ey:1.20f},".format(Ex=Ex,Ey=Ey)
+        args5 = "{Phax:1.20f},{Phay:1.20f}".format(Phax=Phax,Phay=Phay)
         cmd = ("GetPolTraceDirect," + args0 + args1 + args2 + args3
                                     + args4 + args5)
         reply = self._sendDDEcommand(cmd)
@@ -3034,7 +3037,7 @@ class PyZDDE(object):
 
         Returns
         -------
-        numSurfs : integer
+        numSurf : integer
             number of surfaces
         unitCode : integer
             lens units code (0, 1, 2, or 3 for mm, cm, in, or M)
@@ -3411,13 +3414,14 @@ class PyZDDE(object):
         zGetPolTraceDirect()
         """
         args1 = "{wN:d},{m:d},{s:d},".format(wN=waveNum,m=mode,s=surf)
-        args2 = "{hx:1.4f},{hy:1.4f},".format(hx=hx,hy=hy)
-        args3 = "{px:1.4f},{py:1.4f}".format(px=px,py=py)
+        args2 = "{hx:1.20f},{hy:1.20f},".format(hx=hx,hy=hy)
+        args3 = "{px:1.20f},{py:1.20f}".format(px=px,py=py)
         cmd = "GetTrace," + args1 + args2 + args3
         reply = self._sendDDEcommand(cmd)
         rs = reply.split(',')
         rayData = [int(elem) if (i==0 or i==1)
-                                  else float(elem) for i,elem in enumerate(rs)]
+                                  else float(elem) if '-1.#IND' not in elem  # elem may have the value '-1.#IND00000000000E+000' which cannot be converted to float
+                                  else 0.0 for i,elem in enumerate(rs)]
         rtd = _co.namedtuple('rayTraceData', ['error', 'vig', 'x', 'y', 'z',
                                               'dcos_l', 'dcos_m', 'dcos_n',
                                               'dnorm_l2', 'dnorm_m2', 'dnorm_n2',
@@ -6159,7 +6163,7 @@ class PyZDDE(object):
 
         Returns
         -------
-        numSurfs : integer
+        numSurf : integer
             number of surfaces
         unitCode : integer
             lens units code (0, 1, 2, or 3 for mm, cm, in, or M)
@@ -10350,7 +10354,7 @@ class PyZDDE(object):
 
         # Since the object space cardinal points are reported w.r.t. the
         # surface 1, ensure that surface 1 is global reference surface
-        if sysProp.globalRefSurf is not 1:
+        if sysProp.globalRefSurf != 1:
             self.zSetSystem(unitCode=sysProp.unitCode, stopSurf=sysProp.stopSurf,
                             rayAimingType=sysProp.rayAimingType, temp=sysProp.temp,
                             pressure=sysProp.pressure, globalRefSurf=1)
@@ -10388,7 +10392,7 @@ class PyZDDE(object):
             hiatus = abs(ima_z + principalPlane_imgSpace - principalPlane_objSpace)
 
         # Restore the Global ref surface if it was changed
-        if sysProp.globalRefSurf is not 1:
+        if sysProp.globalRefSurf != 1:
             self.zSetSystem(unitCode=sysProp.unitCode, stopSurf=sysProp.stopSurf,
                             rayAimingType=sysProp.rayAimingType, temp=sysProp.temp,
                             pressure=sysProp.pressure,
