@@ -9,10 +9,13 @@
 from os import path as _path
 import sys as _sys
 
-try: # Python 3.x
+try: # Python 3.1 - 3.11
    from configparser import SafeConfigParser
-except ImportError: # Python 2.x
-    from ConfigParser import SafeConfigParser
+except ImportError:
+    try: # Python 3.12
+        from configparser import ConfigParser as SafeConfigParser
+    except ImportError: # Python 2.x
+        from ConfigParser import SafeConfigParser
 
 # Helper functions for chaning settings.ini file
 def setTextEncoding(txt_encoding=0):

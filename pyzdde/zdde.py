@@ -6047,8 +6047,11 @@ class PyZDDE(object):
                     .format(solveData[1], solveData[2], solveData[3], solveData[4])) # surface, scale-factor, offset, column
                 
                 elif solveData[0] == self.SOLVE_EDATA_ZPL: # (Z)
-                    data = str(solveData[1]) # macro name
-        
+                    if len(solveData) > 1:
+                        data = str(solveData[1]) # macro name
+                    else:
+                        data = ''
+
         except IndexError:
             print("Error [zSetSolve]: Check number of solve parameters!")
             return -1
